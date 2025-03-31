@@ -110,7 +110,7 @@ class kernel:
             "**INITIAL TASK**\n"
             f"{config.INITIAL_TASK}\n"
             "\n"
-            "**RULES:**"
+            "**RULES:**\n"
             "   1. You NEVER describe what a command does. The system will do it for you.\n"
             "   2. You NEVER simulate command output.\n"
             "   3. You ONLY generate one command at a time.\n"

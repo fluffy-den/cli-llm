@@ -23,5 +23,5 @@ class commands:
 
     def execute(self, states: states, cmd: str, argv: list[str]) -> str:
         if cmd not in self.commands:
-            return f"Command '{cmd}' not found. Please use `cmd.help -h help` to see available commands."
+            return f"Command '{cmd}' not found. Please use `cmd.help -h help [END]` to see available commands."
         return self.commands[cmd].action(states, argv)
