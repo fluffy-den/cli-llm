@@ -40,10 +40,10 @@ class module_core_cmd_help(command):
         return (
             "\ncmd.help:\n"
             "   A call to this command will display this help message. Please write\n"
-            "   - `cmd.help -h [COMMAND]` to get more information about a specific command.\n"
-            "   - `cmd.help -h help` to get a list of available commands.\n"
+            "   - `cmd.help -h [COMMAND] [END]` to get more information about a specific command.\n"
+            "   - `cmd.help -h help [END]` to get a list of available commands.\n"
             "   NOTE: When specifying a command, [COMMAND] is the name of the command in\n"
-            "   $cmd.[COMMAND]. Here, [COMMAND] is help, without the prefix $ cmd.\n"
+            "   $cmd.[COMMAND].\n"
         )
 
     def long(self) -> str:
