@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools", "wheel"] #TODO: Add huggingface-hub, llama-cpp
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pp_auto_llm"
+version = "1.0.0"
+description = "Pulsar Project - Auto LLM."
+authors = [
+    { name = "Louis-Quentin Noé", email = "louis-quentin.pa.noe@gmail.com" }
+]
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = []
+
+[tool.setuptools]
+packages = ["src"]
+include_package_data = true
