@@ -605,6 +605,9 @@ class CliLlmModuleCore(CliLlmModuleBase):
 # TODO: IO commands:
 # /open_file PATH
 # /close_file (CURRENT)
+# /move FROM TO
+# /copy FROM TO
+# /remove FROM TO
 # /cat -> CAT of 256 tokens MAX of the current cursor position + display before + display after (AROUND)
 # /write (CURRENT) (TEXT)
 # /move_cursor FILE POS
