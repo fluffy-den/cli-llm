@@ -601,20 +601,44 @@ class CliLlmModuleCore(CliLlmModuleBase):
 # If any of theses commands are executed outside of the scope of the allowed directories, theses commands MUST fail and return
 # an error message (NO EXCEPTION, just the error). By default the project directory is the current working directory
 
+# TODO: IO commands:
+# /file_open PATH
+# /file_close (CURRENT)
+# /file_info -> Cursor position, file size, CAT of 256 tokens of the current cursor position (AROUND)
+# /file_write (CURRENT) (TEXT)
+# /file_replace (BEGIN) (END) (TEXT)
+# /file_replace_regex REGEX SUBSTITUTION
+# /file_grep REGEX -> Lines containing matching regex
+
 # TODO: Module Coding Tools:
 # This module allows the AI to use LSP tools such as treesitter, but also grep
+
+# TODO: Coding Tools
+# /code_symbols FILE
+# /workspace_symbols FILE
+# /code_grep_symbols FILE REGEX
+# /workspace_grep_symbols FILE REGEX
+# /replace_symbol SYMBOL NEW_SYMBOL
 
 # TODO: Module Execute:
 # This module allows the AI to execute scripts, executable within the allowed folders
 
+# TODO: Execute commands:
+# /execute PATH ARGS
+
 # TODO: Module Web:
 # This module allows the AI to use a web browser, search for information on the web, etc...
+# /web_search QUERY
 
 # TODO: Module Scratchpad:
 # This module allows the AI to use a scratchpad, a temporary space where it can write code, notes, etc...
+# /memorize MESSAGE
+# /task_memorize TASK_ID MESSAGE
+# /remember TASK_ID
 
 # TODO: Module Debug:
 # This module allows the AI to use a debugger on the currently opened file, set breakpoints, etc... It uses the IO module to get the current file.
+# /debug PATH DARGS ARGS (automatically choose gdb, pydbg etc...)
 
 
 ###! Kernel
