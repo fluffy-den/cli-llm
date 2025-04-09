@@ -575,16 +575,16 @@ class CliLlmModuleCore(CliLlmModuleBase):
             # TODO: Rework TOT: Less, too difficult for AI to understand. Better :
             # /exit
             # /reason ABOUT SOMETHING...
-            # /task_create TITLE -d 0,1,2
-            # /task_comment ID MESSAGE
-            # /task_done ID
-            # /task_fail ID
-            # /task_pending ID
-            # /task_current ID
-            # /task_childrens ID
-            # /task_parents ID
-            # /task_status  ID
-            # /task_history ID
+            # /create TASK_TITLE -d 0,1,2
+            # /comment ID MESSAGE
+            # /done ID
+            # /fail ID
+            # /pending_task_list -> IDs + TITLES
+            # /current_task
+            # /childrens ID
+            # /parents ID
+            # /status  ID
+            # /history ID
             # /ask MESSAGE
             #
             CliLlmCommandExit(),
@@ -603,25 +603,25 @@ class CliLlmModuleCore(CliLlmModuleBase):
 # an error message (NO EXCEPTION, just the error). By default the project directory is the current working directory
 
 # TODO: IO commands:
-# /file_open PATH
-# /file_close (CURRENT)
-# /file_info -> Cursor position, file size, CAT of 256 tokens of the current cursor position (AROUND)
-# /file_write (CURRENT) (TEXT)
-# /file_move_cursor FILE POS
-# /file_cursor FILE
-# /file_replace (BEGIN) (END) (TEXT)
-# /file_replace_regex REGEX SUBSTITUTION
-# /file_grep REGEX -> Lines containing matching regex
+# /open_file PATH
+# /close_file (CURRENT)
+# /cat -> CAT of 256 tokens MAX of the current cursor position + display before + display after (AROUND)
+# /write (CURRENT) (TEXT)
+# /move_cursor FILE POS
+# /cursor FILE
+# /replace (BEGIN) (END) (TEXT)
+# /replace_regex REGEX SUBSTITUTION
+# /grep REGEX -> Lines containing matching regex
 
 # TODO: Module Coding Tools:
 # This module allows the AI to use LSP tools such as treesitter, but also grep
 
 # TODO: Coding Tools
-# /code_symbols FILE
+# /symbols FILE
 # /workspace_symbols FILE
-# /code_grep_symbols FILE REGEX
+# /grep_symbols FILE REGEX
 # /workspace_grep_symbols FILE REGEX
-# /replace_symbol SYMBOL NEW_SYMBOL
+# /replace_symbols SYMBOL NEW_SYMBOL
 
 # TODO: Module Execute:
 # This module allows the AI to execute scripts, executable within the allowed folders
