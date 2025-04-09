@@ -572,6 +572,20 @@ class CliLlmModuleCore(CliLlmModuleBase):
 
     def retrieve_commands(self) -> list[CliLlmCommandBase]:
         return [
+            # TODO: Rework TOT: Less, too difficult for AI to understand. Better :
+            # /exit
+            # /reason ABOUT SOMETHING... (Attach reason to current task!)
+            # /task_create TITLE -d 0,1,2
+            # /task_done 0
+            # /task_fail 0
+            # /task_pending
+            # /task_current
+            # /task_childrens 0
+            # /task_parents 0
+            # /task_status  0
+            # /task_history 0
+            # /ask
+            #
             CliLlmCommandExit(),
             CliLlmCommandreason(),
             CliLlmCommandreasonTask(),
@@ -774,6 +788,8 @@ class CliLlmKernel:
             '       - "Strengths: Thorough decomposition. Weaknesses: Overlooked edge case Z."  \n\n'
             "   - **Improvement Plan**:  \n"
             '     - Suggest how to enhance future reasoning (e.g., "Study modular arithmetic for similar problems").  \n\n'
+            "9. **Ending the Task**:  \n"
+            "   - **Check if all tasks are done using the command `\\task_pending`. If no more task is pending, then you can exit the program using the command `\\exit`**  \n"
             "**Commands**:" + CliLlmKernel.get_command_list_str() + "\n" + "\n"
         )
 
