@@ -574,17 +574,18 @@ class CliLlmModuleCore(CliLlmModuleBase):
         return [
             # TODO: Rework TOT: Less, too difficult for AI to understand. Better :
             # /exit
-            # /reason ABOUT SOMETHING... (Attach reason to current task!)
+            # /reason ABOUT SOMETHING...
             # /task_create TITLE -d 0,1,2
-            # /task_done 0
-            # /task_fail 0
-            # /task_pending
-            # /task_current
-            # /task_childrens 0
-            # /task_parents 0
-            # /task_status  0
-            # /task_history 0
-            # /ask
+            # /task_comment ID MESSAGE
+            # /task_done ID
+            # /task_fail ID
+            # /task_pending ID
+            # /task_current ID
+            # /task_childrens ID
+            # /task_parents ID
+            # /task_status  ID
+            # /task_history ID
+            # /ask MESSAGE
             #
             CliLlmCommandExit(),
             CliLlmCommandreason(),
@@ -606,6 +607,8 @@ class CliLlmModuleCore(CliLlmModuleBase):
 # /file_close (CURRENT)
 # /file_info -> Cursor position, file size, CAT of 256 tokens of the current cursor position (AROUND)
 # /file_write (CURRENT) (TEXT)
+# /file_move_cursor FILE POS
+# /file_cursor FILE
 # /file_replace (BEGIN) (END) (TEXT)
 # /file_replace_regex REGEX SUBSTITUTION
 # /file_grep REGEX -> Lines containing matching regex
@@ -635,6 +638,8 @@ class CliLlmModuleCore(CliLlmModuleBase):
 # /memorize MESSAGE
 # /task_memorize TASK_ID MESSAGE
 # /remember TASK_ID
+# /memory_list
+# /memory_clear
 
 # TODO: Module Debug:
 # This module allows the AI to use a debugger on the currently opened file, set breakpoints, etc... It uses the IO module to get the current file.
