@@ -5,7 +5,6 @@ import os
 import sys
 import argparse
 import json
-import textwrap
 
 
 ###! Configuration
@@ -24,9 +23,9 @@ class CliLlmModel:
     ## Batch size
     N_BATCH = 512
     ## Temperature
-    N_TEMPERATURE = 0.65
+    N_TEMPERATURE = 0.5
     ## Top K
-    N_TOP_K = 40
+    N_TOP_K = 30
     ## Top P
     N_TOP_P = 0.95
     ## Min P
@@ -215,22 +214,426 @@ class CliLlmMessageHistory:
 
 ###! Modules
 ##! Core
+#! Command: /exit
 class CliLlmCommandExit(CliLlmCommandBase):
     def __init__(self):
         super().__init__("exit")
 
     def action(self, args: list[str]) -> str:
-        CliLlmKernel.SHOULD_EXIT = True
-        return "Exiting request has been asked...\n"
+        if CliLlmModuleCore.has_done_all_tasks():
+            CliLlmKernel.SHOULD_EXIT = True
+            return "Exiting request has been asked...\n"
+        else:
+            return "You can't exit the program, because there are still pending tasks to do! Use `/pending_task_list [END]` to identify which tasks needs to be completed!\n"
 
-    def desc_short(self) -> str:
+    def desc(self) -> str:
         return (
             "Exit the program. IMPORTANT: Don't use it unless you're sure that your tasks are finished, and"
             " that you can't continue further!\n"
+            "USAGE: `/exit [END]`\n"
+        )
+
+
+#! Command: /reason (MESSAGE)
+class CliLlmCommandReason(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("say")
+
+    def action(self, args: list[str]) -> str:
+        return "Registered a thought in history!\n"
+
+    def desc(self) -> str:
+        return (
+            "Say something to the user. This command allows you to write down your thoughts to the user. Your thoughts\n"
+            "should contain the idea developed, a thought test, and a conclusion, as well as a list of assumptions or\n"
+            "ideas to develop. Try a thought test to check that you're correct. Add Markdown to your message to\n"
+            "write code, mathematics, etc.\n"
+            "The message might contains code snippets, logical formula tests, mathematicals equations to resolve, and intuition.\n"
+            "USAGE: `/say <MESSAGE> [END]`\n"
+            "EXAMPLE: `/say Let's suppose that P. Then maybe X implies Y... [END]`\n"
+            "EXAMPLE: `/say Let's say I have X=...\n That seems correct. Wait, what if $$\\mathrm{e} = \\sum_{n=0}^{\\infty} \\dfrac{1}{n!}$$\nThis isn't correct. Let's try with...[END]\n"
+        )
+
+
+#! Command: /create_task -c ID1, ID2... -t message
+class CliLlmCommandCreateTask(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("create_task")
+
+    def action(self, args: list[str]) -> str:
+        i = 0
+        title = ""
+        dependencies = []
+
+        while i < len(args):
+            arg = args[i]
+            match arg:
+                case "-c":
+                    i += 1
+                    while i < len(args) and args[i] != "-t":
+                        if args[i].startswith("-") and args[i] != "-t":
+                            return f'Invalid parameter: Can\'t use -c twice or another unknown option. Got "{args[i]}"\n'
+                        if not args[i].isdigit():
+                            return f"Invalid argument: {args[i]} is not a valid ID. It must be a valid integer to an existing task!\n"
+                        if not CliLlmModuleCore.is_valid_task(int(args[i])):
+                            if CliLlmModuleCore.has_created_any_task():
+                                return f"Invalid argument: Task with ID {args[i]}. Their isn't any existing task!\n"
+                            return f"Invalid argument: Task with ID {args[i]} does not exist.\n"
+                        dependencies.append(int(args[i]))
+                        i += 1
+
+                    if len(dependencies) == 0:
+                        return "Invalid argument: -c requires at least one ID. Theses IDs must be integers of valid tasks.\n"
+
+                case "-t":
+                    i += 1
+                    b = i
+                    while i < len(args) and args[i] != "-c":
+                        if args[i].startswith("-") and args[i] != "-c":
+                            return f'Invalid parameter: Can\'t use -t twice or another unknown option. Got "{args[i]}"\n'
+                        i += 1
+
+                    title = " ".join(args[b:i])
+                    if len(title) == 0:
+                        return "Invalid argument: -t requires at least one word for the title of the task!\n"
+
+                case _:
+                    return "Invalid argument: " + arg + "\n"
+
+        # Create the task
+        task_id = CliLlmModuleCore.create_task(title)
+        for dep_id in dependencies:
+            CliLlmModuleCore.add_dependency(task_id, dep_id)
+        return f"Task created with ID {task_id}.\n"
+
+    def desc(self) -> str:
+        return (
+            "Create a new task with the given title and dependencies. You can specify multiple dependencies using -c ID1, ID2...\n"
+            "USAGE: `/create_task -c <ID1> <ID2> ... <IDN> -t <TASK_TITLE> [END]`\n"
+            "EXAMPLE: `/create_task -c 50 45 -t My new task [END]`\n"
+            "         `/create_task -t My new task without dependencies [END]`\n"
+        )
+
+
+#! Command: /comment ID MESSAGE
+class CliLlmCommandComment(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("comment")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) < 2:
+            return "Invalid argument: <ID> and MESSAGE are required.\n"
+
+        task_id = args[0]
+        message = " ".join(args[1:])
+
+        if not task_id.isdigit():
+            return f"Invalid argument: {task_id} is not a valid ID. It must be a valid integer to an existing task!\n"
+
+        if not CliLlmModuleCore.is_valid_task(int(task_id)):
+            return f"Invalid argument: Task with ID {task_id} does not exist.\n"
+
+        CliLlmModuleCore.TASKS[int(task_id)].history.append(message)
+        return f"Comment added to task {task_id}.\n"
+
+    def desc(self) -> str:
+        return (
+            "Add a comment to the specified task. You can specify the task ID and the message. Do exactly the same think as specified for the `/say` command. See its details.\n"
+            "USAGE: `/comment <ID> <MESSAGE> [END]`\n"
+            "EXAMPLE: `/comment 469 This is a comment [END]`\n"
+        )
+
+
+#! Command: /done ID1, ID2...
+class CliLlmCommandDone(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("done")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) == 0:
+            return "Invalid argument: At least one <ID> is required.\n"
+
+        for arg in args:
+            if not arg.isdigit():
+                return f"Invalid argument: {arg} is not a valid ID. It must be a valid integer to an existing task!\n"
+            if not CliLlmModuleCore.is_valid_task(int(arg)):
+                return f"Invalid argument: Task with ID {arg} does not exist.\n"
+            task = CliLlmModuleCore.get_task(int(arg))
+            if not task or not task.status == CliLlmTOTTaskStatus.PENDING:
+                return f"Invalid argument: Task with ID {arg} is not pending.\n"
+
+        result = "Marked the following tasks as done:\n"
+        for arg in args:
+            task = CliLlmModuleCore.get_task(int(arg))
+            assert task is not None
+            task.status = CliLlmTOTTaskStatus.SUCCESS
+            result += f"- Task {arg}: {task.title}\n"
+        return result
+
+    def desc(self) -> str:
+        return (
+            "Mark the specified tasks as done. You can specify multiple IDs using ID1, ID2...\n"
+            "USAGE: `/done <ID1> <ID2> ... <IDN> [END]`\n"
+            "EXAMPLE: `/done 4 21 [END]`\n"
+        )
+
+
+#! Command: /fail ID1, ID2...
+class CliLlmCommandFail(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("fail")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) == 0:
+            return "Invalid argument: At least one <ID> is required.\n"
+
+        for arg in args:
+            if not arg.isdigit():
+                return f"Invalid argument: {arg} is not a valid ID. It must be a valid integer to an existing task!\n"
+            if not CliLlmModuleCore.is_valid_task(int(arg)):
+                return f"Invalid argument: Task with ID {arg} does not exist.\n"
+            task = CliLlmModuleCore.get_task(int(arg))
+            if not task or not task.status == CliLlmTOTTaskStatus.PENDING:
+                return f"Invalid argument: Task with ID {arg} is not pending.\n"
+
+        result = "Marked the following tasks as failed:\n"
+        for arg in args:
+            task = CliLlmModuleCore.get_task(int(arg))
+            assert task is not None
+            task.status = CliLlmTOTTaskStatus.FAILED
+            result += f"- Task {arg}: {task.title}\n"
+        return result
+
+    def desc(self) -> str:
+        return (
+            "Mark the specified tasks as failed. You can specify multiple IDs using ID1, ID2...\n"
+            "USAGE: `/fail <ID1> <ID2> ... <IDN> [END]`\n"
+            "EXAMPLE: `/fail 73 8 [END]`\n"
+        )
+
+
+#! Command: /time_of_creation ID
+class CliLlmCommandTimeOfCreation(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("time_of_creation")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) != 1:
+            return "Invalid argument: <ID> is required.\n"
+
+        task_id = args[0]
+
+        if not task_id.isdigit():
+            return f"Invalid argument: {task_id} is not a valid ID. It must be a valid integer to an existing task!\n"
+
+        if not CliLlmModuleCore.is_valid_task(int(task_id)):
+            return f"Invalid argument: Task with ID {task_id} does not exist.\n"
+
+        task = CliLlmModuleCore.get_task(int(task_id))
+        assert task is not None
+        return f"Task {task_id} was created at {task.created_at}.\n"
+
+    def desc(self) -> str:
+        return (
+            "Get the time of creation of the specified task.\n"
+            "USAGE: `/time_of_creation <ID> [END]`\n"
+            "EXAMPLE: `/time_of_creation 2 [END]`\n"
+        )
+
+
+#! Command: /time_of_update ID
+class CliLlmCommandTimeOfUpdate(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("time_of_update")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) != 1:
+            return "Invalid argument: <ID> is required.\n"
+
+        task_id = args[0]
+
+        if not task_id.isdigit():
+            return f"Invalid argument: {task_id} is not a valid ID. It must be a valid integer to an existing task!\n"
+
+        if not CliLlmModuleCore.is_valid_task(int(task_id)):
+            return f"Invalid argument: Task with ID {task_id} does not exist.\n"
+
+        task = CliLlmModuleCore.get_task(int(task_id))
+        assert task is not None
+        return f"Task {task_id} was updated at {task.updated_at}.\n"
+
+    def desc(self) -> str:
+        return (
+            "Get the time of update of the specified task.\n"
+            "USAGE: `/time_of_update <ID> [END]`\n"
+            "EXAMPLE: `/time_of_update 42 [END]`\n"
+        )
+
+
+#! Command: /pending_task_list
+class CliLlmCommandPendingTaskList(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("pending_task_list")
+
+    def action(self, args: list[str]) -> str:
+        pending_tasks = CliLlmModuleCore.get_pending_tasks()
+        if pending_tasks == []:
+            return "No pending tasks.\n"
+
+        result = "Pending tasks:\n"
+        for task in pending_tasks:
+            parents = ", ".join([str(p) for p in task.parents])
+            childrens = ", ".join([str(c) for c in task.children])
+            result += f"- ID: {task.id}, Title: {task.title}, Parents: {parents}, Childrens: {childrens}\n"
+        return result
+
+    def desc(self) -> str:
+        return (
+            "List all pending tasks with their IDs and titles.\n"
+            "USAGE: `/pending_task_list [END]`\n"
+            "EXAMPLE: `/pending_task_list [END]`\n"
+        )
+
+
+#! Command: /current_task
+class CliLlmCommandCurrentTask(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("current_task")
+
+    def action(self, args: list[str]) -> str:
+        if CliLlmModuleCore.CURRENT_TASK == -1:
+            return "No current task.\n"
+        task = CliLlmModuleCore.get_task(CliLlmModuleCore.CURRENT_TASK)
+        assert task is not None
+        return f"Current task ID: {task.id}, Title: {task.title}\n"
+
+    def desc(self) -> str:
+        return (
+            "Get the current task <ID> and title.\n"
+            "USAGE: `/current_task [END]`\n"
+            "EXAMPLE: `/current_task [END]`\n"
+        )
+
+
+#! Command: /childrens ID
+class CliLlmCommandChildrens(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("childrens")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) != 1:
+            return "Invalid argument: <ID> is required.\n"
+
+        task_id = args[0]
+
+        if not task_id.isdigit():
+            return f"Invalid argument: {task_id} is not a valid ID. It must be a valid integer to an existing task!\n"
+
+        if not CliLlmModuleCore.is_valid_task(int(task_id)):
+            return f"Invalid argument: Task with ID {task_id} does not exist.\n"
+
+        task = CliLlmModuleCore.get_task(int(task_id))
+        assert task is not None
+        return f"Task {task_id} has childrens: {', '.join([str(c) for c in task.children])}\n"
+
+    def desc(self) -> str:
+        return (
+            "Get the childrens of the specified task.\n"
+            "USAGE: `/childrens <ID> [END]`\n"
+            "EXAMPLE: `/childrens 68 [END]`\n"
+        )
+
+
+#! Command: /parents ID
+class CliLlmCommandParents(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("parents")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) != 1:
+            return "Invalid argument: <ID> is required.\n"
+
+        task_id = args[0]
+
+        if not task_id.isdigit():
+            return f"Invalid argument: {task_id} is not a valid ID. It must be a valid integer to an existing task!\n"
+
+        if not CliLlmModuleCore.is_valid_task(int(task_id)):
+            return f"Invalid argument: Task with ID {task_id} does not exist.\n"
+
+        task = CliLlmModuleCore.get_task(int(task_id))
+        assert task is not None
+        return (
+            f"Task {task_id} has parents: {', '.join([str(p) for p in task.parents])}\n"
         )
 
     def desc(self) -> str:
-        return self.desc_short()
+        return (
+            "Get the parents of the specified task.\n"
+            "USAGE: `/parents <ID> [END]`\n"
+            "EXAMPLE: `/parents 56 [END]`\n"
+        )
+
+
+#! Command: /status ID
+class CliLlmCommandStatus(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("status")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) != 1:
+            return "Invalid argument: <ID> is required.\n"
+
+        task_id = args[0]
+
+        if not task_id.isdigit():
+            return f"Invalid argument: {task_id} is not a valid ID. It must be a valid integer to an existing task!\n"
+
+        if not CliLlmModuleCore.is_valid_task(int(task_id)):
+            return f"Invalid argument: Task with ID {task_id} does not exist.\n"
+
+        task = CliLlmModuleCore.get_task(int(task_id))
+        assert task is not None
+        return f"Task {task_id} status: {CliLlmTOTTaskStatus.to_string(task.status)}\n"
+
+    def desc(self) -> str:
+        return (
+            "Get the status of the specified task.\n"
+            "USAGE: `/status <ID> [END]`\n"
+            "EXAMPLE: `/status 53 [END]`\n"
+        )
+
+
+#! Command: /history ID
+class CliLlmCommandHistory(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("history")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) != 1:
+            return "Invalid argument: <ID> is required.\n"
+
+        task_id = args[0]
+
+        if not task_id.isdigit():
+            return f"Invalid argument: {task_id} is not a valid ID. It must be a valid integer to an existing task!\n"
+
+        if not CliLlmModuleCore.is_valid_task(int(task_id)):
+            return f"Invalid argument: Task with <ID> {task_id} does not exist.\n"
+
+        task = CliLlmModuleCore.get_task(int(task_id))
+        assert task is not None
+        return f"Task {task_id} history:\n" + "\n".join(task.history) + "\n"
+
+    def desc(self) -> str:
+        return (
+            "Get the comment / reason history of the specified task.\n"
+            "USAGE: `/history <ID> [END]`\n"
+            "EXAMPLE: `/history 39 [END]`\n"
+        )
+
+
+#! TODO: Command: /ask MESSAGE
 
 
 class CliLlmTOTTaskStatus(enumerate):
@@ -252,347 +655,91 @@ class CliLlmTOTTaskStatus(enumerate):
 
 
 class CliLlmTOTTask:
-    def __init__(self, task_id: int, title: str, dependencies: list[int] | None = None):
+    def __init__(self, task_id: int, title: str):
         self.id = task_id
         self.title = title
-        self.dependencies = dependencies if dependencies is not None else []
-        self.thoughts: list[str] = []
+        self.parents = []
+        self.children = []
+        self.history: list[str] = []
         self.status = CliLlmTOTTaskStatus.PENDING
         self.created_at = datetime.datetime.now()
         self.updated_at = datetime.datetime.now()
 
 
-class CliLlmTOTTaskManager:
-    TASKS: dict[int, CliLlmTOTTask] = {}
-    CURRENT_TASK_ID: int | None = None  # Track active task
-
-    @classmethod
-    def generate_task_id(cls) -> int:
-        return max(cls.TASKS.keys(), default=0) + 1
-
-    @classmethod
-    def add_task(cls, task: CliLlmTOTTask):
-        if task.id in cls.TASKS:
-            raise ValueError(f"Task ID {task.id} already exists")
-        cls.TASKS[task.id] = task
-        cls.CURRENT_TASK_ID = task.id  # Set as current task
-
-    @classmethod
-    def update_task_status(cls, task_id: int, status: int):
-        task = cls.TASKS.get(task_id)
-        if task:
-            task.status = status
-            task.updated_at = datetime.datetime.now()
-        else:
-            raise ValueError(f"Task {task_id} not found")
-
-    @classmethod
-    def get_task(cls, task_id: int) -> CliLlmTOTTask | None:
-        return cls.TASKS.get(task_id)
-
-    @classmethod
-    def get_child_tasks(cls, task_id: int) -> list[CliLlmTOTTask]:
-        return [t for t in cls.TASKS.values() if task_id in t.dependencies]
-
-    @classmethod
-    def validate_dependencies(cls, dependencies: list[int]) -> bool:
-        return all(dep in cls.TASKS for dep in dependencies)
-
-
-class CliLlmCommandreason(CliLlmCommandBase):
-    def __init__(self):
-        super().__init__("reason")
-
-    def action(self, args: list[str]) -> str:
-        try:
-            task_id = None
-            message = []
-            i = 0
-
-            while i < len(args):
-                if args[i] == "-d" and i + 1 < len(args):
-                    if args[i + 1].isdigit():
-                        task_id = int(args[i + 1])
-                        i += 2
-                    else:
-                        return "Invalid task ID after -d"
-                else:
-                    message.append(args[i])
-                    i += 1
-
-            if not message:
-                return "Error: Empty thought"
-
-            thought = " ".join(message)
-
-            if task_id is not None:
-                task = CliLlmTOTTaskManager.TASKS.get(task_id)
-                if not task:
-                    return f"Task {task_id} not found"
-                task.thoughts.append(thought)
-                return f"Added thought to task {task_id}"
-            else:
-                # Add to global history
-                return "Added global thought"
-
-        except Exception as e:
-            return f"Error recording thought: {str(e)}"
-
-    def desc(self) -> str:
-        return (
-            "Usage: /reason {-d (TASK_ID)} (MESSAGE) [END]\n"
-            "Let you reason, validate, explore about a task (TASK_ID) or the last task being added. (MESSAGE) can be a very long string message. Use this command to develop the reason of a task! You can use maths, code of any language, formulas...\n"
-            "   (optional) -d (TASK_ID): This optional argument allows you to specify on which (TASK_ID) you're reason on.\n"
-            "Examples:\n"
-            "/reason I think that I should begin with X to do Y, but I must also consider the effects of Z on X... Maybe Y implies X... Etc... [END]\n"
-            "/reason -d 5 The task '5' might involve ... Let's try to write the formula... Is x + y = z... [END]\n"
-            "/reason Wait 2 + 3 isn't equal to 6! [END]\n"
-            "/reason Is it right that X ?... [END]\n"
-        )
-
-
-class CliLlmCommandreasonNew(CliLlmCommandBase):
-    def __init__(self):
-        super().__init__("task_new")
-
-    def action(self, args: list[str]) -> str:
-        try:
-            # Parse arguments
-            task_name_parts = []
-            dependencies = []
-            parse_deps = False
-
-            for arg in args:
-                if arg == "-d":
-                    parse_deps = True
-                elif parse_deps:
-                    if arg.isdigit():
-                        dependencies.append(int(arg))
-                    else:
-                        return f"Invalid dependency: {arg} must be integer"
-                else:
-                    task_name_parts.append(arg)
-
-            if not task_name_parts:
-                return "Error: Task name required"
-
-            # Validate dependencies
-            if not CliLlmTOTTaskManager.validate_dependencies(dependencies):
-                return "Error: One or more dependencies don't exist"
-
-            # Create task
-            new_id = CliLlmTOTTaskManager.generate_task_id()
-            new_task = CliLlmTOTTask(
-                task_id=new_id,
-                title=" ".join(task_name_parts),
-                dependencies=dependencies,
-            )
-            CliLlmTOTTaskManager.add_task(new_task)
-            return f"Created task with ID: {new_id}"
-
-        except Exception as e:
-            return f"Error creating task: {str(e)}"
-
-    def desc(self) -> str:
-        return (
-            "Usage: /task_new (TASK_NAME) {-d (DEPENDENCY_ID_1) (DEPENDENCY_ID_2) ...} [END]\n"
-            "Creates a new task with the specified name and dependencies.\n"
-            "   (optional) -d (DEPENDENCY_1) (DEPENDENCY_2): This optional argument allows you to specify that this new task is a subtask of every"
-            " dependencies specified by '-d'. You can specify as many dependencies as you want.\n"
-            "Note: A task must not be done or failed when reason about it!\n"
-            "Examples:\n"
-            "/task_new Discovering project files... [END]\n"
-            "The previous command will return a TASK_ID, which you can use to refer to this task.\n"
-            "/task_new -d 5 Discovering files of folder X...[END]\n"
-        )
-
-
-class CliLlmCommandreasonTask(CliLlmCommandBase):
-    def __init__(self):
-        super().__init__("task")
-
-    def action(self, args: list[str]) -> str:
-        try:
-            task_id = None
-            task = None
-            flags = set()
-            i = 0
-
-            # Parse arguments
-            while i < len(args):
-                if args[i] == "-t" and i + 1 < len(args):
-                    task_id = int(args[i + 1])
-                    i += 2
-                elif args[i].startswith("-"):
-                    flags.add(args[i][1:])
-                    i += 1
-                else:
-                    i += 1
-
-            # Resolve task ID
-            if not task_id and "i" in flags:
-                task_id = CliLlmTOTTaskManager.CURRENT_TASK_ID
-
-            if task_id is not None:
-                task = CliLlmTOTTaskManager.TASKS.get(task_id)
-                if not task:
-                    return f"Task {task_id} not found"
-
-            # Build response
-            response = []
-            if "p" in flags:  # Parents
-                if not task:
-                    return "Error: Task required to get parent tasks"
-
-                parents = [
-                    f"{dep}: {CliLlmTOTTaskManager.TASKS[dep].title}"
-                    for dep in task.dependencies
-                    if dep in CliLlmTOTTaskManager.TASKS
-                ]
-                response.append(f"Parents: {', '.join(parents) or 'None'}")
-
-            if "c" in flags:  # Children
-                if not task_id:
-                    return "Error: Task required to get child tasks"
-                children = [
-                    f"{t.id}: {t.title}"
-                    for t in CliLlmTOTTaskManager.get_child_tasks(task_id)
-                ]
-                response.append(f"Children: {', '.join(children) or 'None'}")
-
-            if "s" in flags:  # Status
-                if not task:
-                    return "Error: Task required to get status"
-                response.append(f"Status: {CliLlmTOTTaskStatus.to_string(task.status)}")
-
-            if "h" in flags:  # Thoughts
-                if not task:
-                    return "Error: Task required to get thoughts"
-                thoughts = "\n".join(
-                    [f"{i + 1}. {t}" for i, t in enumerate(task.thoughts)]
-                )
-                response.append(f"Thoughts:\n{thoughts or 'None'}")
-
-            return "\n".join(response) or "No information requested"
-
-        except Exception as e:
-            return f"Error retrieving task info: {str(e)}"
-
-    def desc(self) -> str:
-        return (
-            "Usage: /task {-t (TASK_ID)} {-i} {-p} {-c} [END]\n"
-            "This command allows you to get information about a specific task.\n"
-            "   (optional) -t (TASK_ID): This optional argument allows you to execute the others arguments specific to this (TASK_ID).\n"
-            "   (optional) -i: Get the (TASK_ID) of the current running task. Irrevelant when using with '-t'\n"
-            "   (optional) -p: Get a list of the parent tasks of this task or the specified task with '-t'\n"
-            "   (optional) -c: Get a list of the child tasks of this task or the specified task with '-t'\n"
-            "   (optional) -d: Get the creation time of the specified task.\n"
-            "   (optional) -u: Get the update time of the specified task.\n"
-            "   (optional) -s: Get the status of the specified task.\n"
-            "   (optional) -h: Get the thoughts history about the specified task.\n"
-            "Note: You can combine arguments together.\n"
-            "Examples:"
-            "/task -i [END]\n"
-            "/task -t 5 -p [END]\n"
-            "/task -t 7 -c [END]\n"
-            "/task -t 9 -p -c [END]\n"
-            "/task -t 10 -d -u -s -h [END]\n"
-        )
-
-
-class CliLlmCommandreasonDone(CliLlmCommandBase):
-    def __init__(self):
-        super().__init__("task_done")
-
-    def action(self, args: list[str]) -> str:
-        if len(args) != 1 or not args[0].isdigit():
-            return "Usage: /task_done (TASK_ID) [END]"
-
-        task_id = int(args[0])
-        try:
-            CliLlmTOTTaskManager.update_task_status(
-                task_id, CliLlmTOTTaskStatus.SUCCESS
-            )
-            return f"Task {task_id} marked successful"
-        except Exception as e:
-            return f"Error updating task: {str(e)}"
-
-    def desc(self) -> str:
-        return (
-            "Usage: /task_done (TASK_ID) [END]\n"
-            "Marks the specified task as done.\n"
-            "Example:\n"
-            "/task_done 24 [END]\n"
-        )
-
-
-class CliLlmCommandreasonFail(CliLlmCommandBase):
-    def __init__(self):
-        super().__init__("task_fail")
-
-    def action(self, args: list[str]) -> str:
-        if len(args) != 1 or not args[0].isdigit():
-            return "Usage: /task_fail TASK_ID [END]"
-
-        task_id = int(args[0])
-        try:
-            CliLlmTOTTaskManager.update_task_status(task_id, CliLlmTOTTaskStatus.FAILED)
-            return f"Task {task_id} marked failed"
-        except Exception as e:
-            return f"Error updating task: {str(e)}"
-
-    def desc(self) -> str:
-        return (
-            "Usage: /task_fail (TASK_ID) [END]\n"
-            "Marks the specified task as failed.\n"
-            "Example:\n"
-            "/task_fail 3 [END]\n"
-        )
-
-
-# TODO: Move to new module 'interactive' this command
-class CliLlmCommandreasonAsk(CliLlmCommandBase):
-    def __init__(self):
-        super().__init__("ask")
-
-    def action(self, args: list[str]) -> str:
-        # TODO: Allow AI to ask a a question to the user
-        return super().action(args)
-
-    def desc(self) -> str:
-        return (
-            "Usage: /ask (QUESTION) [END]\n"
-            "Allows the AI to ask a question to the user. This will create a special task called\n"
-        )
-
-
 class CliLlmModuleCore(CliLlmModuleBase):
+    TASKS: dict[int, CliLlmTOTTask] = {}
+    CURRENT_TASK: int = -1
+
     def __init__(self):
         super().__init__("core")
 
+    @staticmethod
+    def create_task(title: str) -> int:
+        task_id = len(CliLlmModuleCore.TASKS)
+        task = CliLlmTOTTask(task_id, title)
+        CliLlmModuleCore.TASKS[task_id] = task
+        CliLlmModuleCore.CURRENT_TASK = task_id
+        return task_id
+
+    @staticmethod
+    def has_created_any_task() -> bool:
+        return len(CliLlmModuleCore.TASKS) > 0
+
+    @staticmethod
+    def has_done_all_tasks() -> bool:
+        for task in CliLlmModuleCore.TASKS.values():
+            if task.status == CliLlmTOTTaskStatus.PENDING:
+                return False
+        return True
+
+    @staticmethod
+    def is_valid_task(task_id: int) -> bool:
+        return task_id in CliLlmModuleCore.TASKS
+
+    @staticmethod
+    def add_dependency(children: int, parent: int):
+        assert CliLlmModuleCore.is_valid_task(parent)
+        assert CliLlmModuleCore.is_valid_task(children)
+        CliLlmModuleCore.TASKS[parent].children.append(children)
+        CliLlmModuleCore.TASKS[children].parents.append(parent)
+
+    @staticmethod
+    def get_task(task_id: int) -> CliLlmTOTTask | None:
+        return (
+            CliLlmModuleCore.TASKS[task_id]
+            if task_id in CliLlmModuleCore.TASKS
+            else None
+        )
+
+    @staticmethod
+    def get_pending_tasks() -> list[CliLlmTOTTask]:
+        pending_list = []
+        for task in CliLlmModuleCore.TASKS.values():
+            if task.status == CliLlmTOTTaskStatus.PENDING:
+                pending_list.append(task)
+        return pending_list
+
+    @staticmethod
+    def set_current_task(task_id: int):
+        assert CliLlmModuleCore.is_valid_task(task_id)
+        CliLlmModuleCore.CURRENT_TASK = task_id
+
     def retrieve_commands(self) -> list[CliLlmCommandBase]:
         return [
-            # TODO: Rework TOT: Less, too difficult for AI to understand. Better :
-            # /exit
-            # /reason ABOUT SOMETHING...
-            # /create TASK_TITLE -d 0,1,2
-            # /comment ID MESSAGE
-            # /done ID
-            # /fail ID
-            # /pending_task_list -> IDs + TITLES
-            # /current_task
-            # /childrens ID
-            # /parents ID
-            # /status  ID
-            # /history ID
-            # /ask MESSAGE
-            #
             CliLlmCommandExit(),
-            CliLlmCommandreason(),
-            CliLlmCommandreasonTask(),
-            CliLlmCommandreasonNew(),
-            CliLlmCommandreasonDone(),
-            CliLlmCommandreasonFail(),
+            CliLlmCommandReason(),
+            CliLlmCommandCreateTask(),
+            CliLlmCommandComment(),
+            CliLlmCommandDone(),
+            CliLlmCommandFail(),
+            CliLlmCommandTimeOfCreation(),
+            CliLlmCommandTimeOfUpdate(),
+            CliLlmCommandPendingTaskList(),
+            CliLlmCommandCurrentTask(),
+            CliLlmCommandChildrens(),
+            CliLlmCommandParents(),
+            CliLlmCommandStatus(),
+            CliLlmCommandHistory(),
         ]
 
 
@@ -743,86 +890,34 @@ class CliLlmKernel:
     @staticmethod
     def compute_sys_prompt():
         return (
-            "[INST] <s> "
-            "**Advanced Reasoning Framework**  \n"
-            '"You are an advanced AI trained to solve tasks methodically. Follow this structured framework to ensure rigorous, accurate, and human-like reasoning. Never skip steps unless explicitly instructed."  \n\n'
-            "**Initial Task**:" + CliLlmKernel.TASK + "\n\n"
-            "**Core Protocol**:  \n"
-            "1. **Problem Analysis**:  \n"
-            "   - **Clarify the Task**:  \n"
-            "     - For each thoughts, use the command `\\reason MESSAGE [END]` to write down your thinkings. \n"
-            "     - Paraphrase the problem in your own words.  \n"
-            "     - Identify key objectives, constraints, and implicit requirements.  \n"
-            "     - Example:  \n"
-            '       Task: "Calculate the total cost of 5 apples priced at $2 each with a 10% discount."  \n'
-            '       Clarification: "Objective: Compute final price after discount. Constraints: 5 apples, $2 per apple, 10% off total. Implicit: No taxes or fees."  \n\n'
-            "   - **Domain Identification**:  \n"
-            "     - Categorize the task (e.g., math, coding, creative writing, logic puzzle). And give a title of each task using `\\task_new TITLE [END]`\n"
-            "     - Activate domain-specific reasoning patterns (e.g., PEMDAS for math, pseudocode for programming).  \n\n"
-            "2. **Decomposition**:  \n"
-            "   - **Break into Subproblems**:  \n"
-            "     - Split the task into sequential, manageable steps.  \n"
-            "     - Example for Coding:  \n"
-            "       - Subproblem 1: Validate user input.  \n"
-            "       - Subproblem 2: Implement algorithm X.  \n"
-            "       - Subproblem 3: Handle edge cases (e.g., empty inputs).  \n\n"
-            "   - **Prioritize Dependencies**:  \n"
-            "     - Order subproblems logically (e.g., solve equation A before plotting graph B).  \n\n"
-            "3. **Hypothesis Generation**:  \n"
-            "   - **Brainstorm Approaches**:  \n"
-            "     - Propose 2-3 potential methods to solve each subproblem.  \n"
-            "     - Example for Math:  \n"
-            "       - Method 1: Apply linear algebra.  \n"
-            "       - Method 2: Use trial-and-error with constraints.  \n\n"
-            "   - **Select Optimal Strategy**:  \n"
-            "     - Choose the method that balances efficiency, accuracy, and resource limits.  \n"
-            '     - Rationale: "Linear algebra scales better than trial-and-error for large datasets."  \n\n'
-            "4. **Step-by-Step Execution**:  \n"
-            "   - **Detailed Walkthrough**:  \n"
-            "     - Explain every operation, formula, or logical deduction.  \n"
-            "     - For Creative Tasks:  \n"
-            '       - "Introduce a protagonist with trait X to create conflict Y, aligning with theme Z."  \n\n'
-            "   - **Inline Verification**:  \n"
-            "     - After each step, validate outputs before proceeding:  \n"
-            '       - Arithmetic: "5 apples × 2 = 10 → 10 × 0.9 = 9 ✔️"  \n'
-            '       - Logic: "If X is true, then Y must follow because..."  \n\n'
-            "5. **Error Checking & Recovery**:  \n"
-            "   - **Self-Verification Checklist**:  \n"
-            "     - Cross-validate results using:  \n"
-            "       - Alternative Methods: Solve the same problem a different way.  \n"
-            "       - Unit Tests: For code, test edge cases (e.g., zero, null, extremes).  \n"
-            '       - External Knowledge: "PrimeGrid’s database confirms 1,000,000th prime is 15,485,863."  \n\n'
-            "   - **Iterative Refinement**:  \n"
-            "     - If errors are found:  \n"
-            '       - Diagnose root cause (e.g., "Miscount in loop iteration 3").  \n'
-            "       - Correct and re-verify the entire chain.  \n\n"
-            "6. **Ambiguity Handling**:  \n"
-            "   - **Explicit Assumptions**:  \n"
-            "     - Document any assumptions made due to incomplete data.  \n"
-            '     - Example: "Assuming ‘price’ refers to USD and discounts apply post-tax."  \n\n'
-            "   - **Explore Scenarios**:  \n"
-            "     - Provide answers for multiple interpretations if ambiguity persists:  \n"
-            '       - Scenario 1: "If X is true, then Answer = A."  \n'
-            '       - Scenario 2: "If Y is true, then Answer = B."  \n\n'
-            "7. **Final Answer Synthesis**:  \n"
-            "   - **Unified Response**:  \n"
-            "     - Consolidate results into a clear, concise answer.  \n"
-            "     - Format based on task type:  \n"
-            "       - Math: Boxed answer \\boxed{9}.  \n"
-            "       - Code: Full script with comments.  \n"
-            "       - Creative: Story with marked climax/resolution.  \n\n"
-            "   - **Lessons Learned**:  \n"
-            '     - Summarize key insights (e.g., "Trig substitution simplified integration").  \n\n'
-            "8. **Post-Solution Reflection**:  \n"
-            "   - **Update tasks status with the commands `\\task_done`, `\\task_fail` and check other tasks status with `\\task`. \n"
-            "   - **Critical Analysis**:  \n"
-            "     - Evaluate your own performance:  \n"
-            '       - "Strengths: Thorough decomposition. Weaknesses: Overlooked edge case Z."  \n\n'
-            "   - **Improvement Plan**:  \n"
-            '     - Suggest how to enhance future reasoning (e.g., "Study modular arithmetic for similar problems").  \n\n'
-            "9. **Ending the Task**:  \n"
-            "   - **Check if all tasks are done using the command `\\task_pending`. If no more task is pending, then you can exit the program using the command `\\exit`**  \n"
-            "**Commands**:" + CliLlmKernel.get_command_list_str() + "\n" + "\n"
+            "[INST] <s>\n"
+            "**Structured Reasoning Protocol**\n\n"
+            "Follow this exact sequence for EVERY action:\n"
+            "1. THINK: Analyze the current task and plan what you should do. It is useful to call these commands several times before going to 2. This allows you to test your thoughts, and check that the next action is actually what you want to do. Always check that your thinking is in line with the idea being developed.\n"
+            "2. ACT: Choose ONE command from the available commands section below.\n"
+            "3. REFLECT: Verify action results before continuing.\n"
+            "4. PLAN: Set, plan, test and improve your thoughts. Are you getting the results you want? Is there room for improvement? Have you made mistakes?\n\n"
+            "**Current Task Context**\n"
+            f"Main Objective: {CliLlmKernel.TASK}\n"
+            "**Execution Cycle Template**\n"
+            "EXAMPLE 1 - Math Problem:\n"
+            "/reason Analyzing equation: First I need to isolate x... [END]\n"
+            "/create_task -c 12 -t Verify solution by substitution [END]\n"
+            "/comment 13 Checking if x=5 satisfies original equation [END]\n\n"
+            "EXAMPLE 2 - Programming Task:\n"
+            "/reason The infinite loop likely comes from incorrect termination condition [END]\n"
+            "/create_task -c 8 -t Implement new loop structure [END]\n"
+            "/comment 9 Trying while loop with decrementing counter [END]\n"
+            "/done 9 [END]\n\n"
+            "**Strict Command Rules:**\n"
+            "- ALWAYS use /reason BEFORE creating tasks\n"
+            "- Create MAX 3 subtasks per action\n"
+            "- Always terminate a command call with [END]! EXAMPLE: \\<command> <args or parameters...> [END]. One command call always finish with [END]!\n"
+            "- Verify dependencies with /parents before /done\n"
+            "- Use /comment after EVERY task creation\n\n"
+            "**Available Commands:**\n"
+            f"{CliLlmKernel.get_command_list_str()}\n"
+            "</s> [/INST]"
         )
 
     @staticmethod
@@ -839,18 +934,16 @@ class CliLlmKernel:
 
         # Generate first answer
         full_response = CliLlmModel.send_prompt(
-            sys_prompt + f"\n{CliLlmKernel.get_wd()}$ /", CliLlmKernel.GRAMMAR
+            sys_prompt,
+            CliLlmKernel.GRAMMAR,
         )
         argv = full_response["choices"][0]["text"]
         argv = argv.strip()
         answer = f"\n{CliLlmKernel.get_wd()}$ /{argv} [END]\n"
-        print(answer)
-        print("")
 
         # Process first command
         argv_words = argv.split(" ")
         result = CliLlmKernel.COMMANDS.execute(argv_words[0], argv_words[1:])
-        # print(CliLlmKernel.STATES.message_status())
 
         # Initialize History
         CliLlmKernel.CONTEXT_HISTORY = CliLlmMessageHistory(sys_prompt + answer)
@@ -862,8 +955,6 @@ class CliLlmKernel:
 
         # Continuous Prompt
         prompt = CliLlmKernel.compute_prompt()
-        print(prompt)
-        print("")
 
         # Appending working directory to generated prompt
         prompt += f"\n{CliLlmKernel.get_wd()}$ /"
