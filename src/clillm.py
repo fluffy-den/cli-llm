@@ -1,10 +1,12 @@
-from llama_cpp import LlamaGrammar, Llama
+from typing import Tuple, TextIO
+from llama_cpp import Llama
 
 import datetime
 import os
 import sys
 import argparse
-import json
+import shutil
+import re
 
 
 ###! Configuration
@@ -50,7 +52,7 @@ class CliLlmModel:
                 sys.exit(1)
 
     @staticmethod
-    def send_prompt(prompt: str, grammar: LlamaGrammar | None, max_tokens: int = N_CTX):
+    def send_prompt(prompt: str, max_tokens: int = N_CTX):
         if not CliLlmModel.MODEL:
             raise ValueError("Model not initialized")
 
@@ -189,16 +191,25 @@ class CliLlmModuleManager:
 
 ###! Message History
 class CliLlmMessageHistory:
-    def __init__(self, system_prompt: str):
-        self.system_prompt = system_prompt
+    def __init__(self):
+        self.system_prompt: str | None = None
         self.blocks: list[str] = []
         self.counts: list[int] = []
-        self.total_size = len(system_prompt)
+        self.total_size = 0
+
+    def compute_tokens(self, prompt: str) -> int:
+        assert CliLlmModel.MODEL is not None
+        return len(CliLlmModel.MODEL.tokenize(prompt.encode("utf-8")))
+
+    def set_system_prompt(self, system_prompt: str):
+        assert self.system_prompt is None
+        self.system_prompt = system_prompt
+        self.total_size += self.compute_tokens(system_prompt)
 
     def add(self, content: str):
+        assert self.system_prompt is not None
         assert CliLlmModel.MODEL is not None
-        tokens = CliLlmModel.MODEL.tokenize(content.encode("utf-8"))
-        tokens_count = len(tokens)
+        tokens_count = self.compute_tokens(content)
 
         while self.total_size > CliLlmModel.N_CTX and len(self.blocks) > 0:
             self.blocks.pop(0)
@@ -209,6 +220,7 @@ class CliLlmMessageHistory:
         self.total_size += tokens_count
 
     def get(self) -> str:
+        assert self.system_prompt is not None
         return "\n".join([self.system_prompt] + self.blocks)
 
 
@@ -604,7 +616,7 @@ class CliLlmCommandStatus(CliLlmCommandBase):
         )
 
 
-#! Command: /history ID
+#! Command: /history <ID> [END]
 class CliLlmCommandHistory(CliLlmCommandBase):
     def __init__(self):
         super().__init__("history")
@@ -633,9 +645,28 @@ class CliLlmCommandHistory(CliLlmCommandBase):
         )
 
 
-#! TODO: Command: /ask MESSAGE
+#! Command: /ask <MESSAGE> [END]
+class CliLlmCommandAsk(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("ask")
+
+    def action(self, args: list[str]) -> str:
+        if not args:
+            return "Invalid argument: <MESSAGE> is required."
+        message = " ".join(args[:-1]).strip()
+        if not message:
+            return "Invalid argument: Empty message."
+        return f"Question asked: {message}"
+
+    def desc(self) -> str:
+        return (
+            "Ask a question to the user and wait for an answer. The AI will pause until the user responds.\n"
+            "USAGE: `/ask <MESSAGE> [END]`\n"
+            "EXAMPLE: `/ask What is the capital of France? [END]`\n"
+        )
 
 
+#!Module Core -> Task Status
 class CliLlmTOTTaskStatus(enumerate):
     PENDING = 0
     SUCCESS = 1
@@ -654,6 +685,7 @@ class CliLlmTOTTaskStatus(enumerate):
                 return "UNKNOWN"
 
 
+#!Module Core -> Task
 class CliLlmTOTTask:
     def __init__(self, task_id: int, title: str):
         self.id = task_id
@@ -666,6 +698,7 @@ class CliLlmTOTTask:
         self.updated_at = datetime.datetime.now()
 
 
+#!Module Core
 class CliLlmModuleCore(CliLlmModuleBase):
     TASKS: dict[int, CliLlmTOTTask] = {}
     CURRENT_TASK: int = -1
@@ -740,28 +773,655 @@ class CliLlmModuleCore(CliLlmModuleBase):
             CliLlmCommandParents(),
             CliLlmCommandStatus(),
             CliLlmCommandHistory(),
+            CliLlmCommandAsk(),
         ]
 
 
-# TODO: Module IO:
-# This module allows the AI to write files, manage directories, move within, etc... We also make sure
-# that theses commands are secure : The user will set a list of directories that are available for writing / reading.
-# If any of theses commands are executed outside of the scope of the allowed directories, theses commands MUST fail and return
-# an error message (NO EXCEPTION, just the error). By default the project directory is the current working directory
+#!Command /open_file <FILE> [END]
+class CliLlmCommandOpenFile(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("open_file")
 
-# TODO: IO commands:
-# /open_file PATH
-# /close_file (CURRENT)
-# /move FROM TO
-# /copy FROM TO
-# /remove FROM TO
-# /cat -> CAT of 256 tokens MAX of the current cursor position + display before + display after (AROUND)
-# /write (CURRENT) (TEXT)
-# /move_cursor FILE POS
-# /cursor FILE
-# /replace (BEGIN) (END) (TEXT)
-# /replace_regex REGEX SUBSTITUTION
-# /grep REGEX -> Lines containing matching regex
+    def action(self, args: list[str]) -> str:
+        if not args:
+            return "Error: <PATH> is required."
+        path = args[0]
+        full_path = os.path.abspath(os.path.join(CliLlmKernel.CURRENT_WD, path))
+        # Validate path is allowed
+        allowed = False
+        for dir in CliLlmKernel.ALLOWED_DIRECTORIES:
+            if full_path.startswith(dir + os.sep) or full_path == dir:
+                allowed = True
+                break
+        if not allowed:
+            return f"Error: Path '{path}' is not allowed."
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        try:
+            if CliLlmModuleIO.CURRENT_FILE:
+                CliLlmModuleIO.CURRENT_FILE.close()
+            CliLlmModuleIO.CURRENT_FILE = open(full_path, "r+")
+            CliLlmModuleIO.CURRENT_FILE_PATH = full_path
+            return f"File opened: {full_path}"
+        except Exception as e:
+            return f"Error opening file: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Open a file for reading/writing. Only one file can be open at a time.\n"
+            "This will create the parent directories automatically if missing.\n"
+            "USAGE: `/open_file <PATH> [END]\n"
+            "EXAMPLE: `/open_file report.txt [END]\n"
+        )
+
+
+#!Command /close_file [END]
+class CliLlmCommandCloseFile(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("close_file")
+
+    def action(self, args: list[str]) -> str:
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is currently open."
+        try:
+            CliLlmModuleIO.CURRENT_FILE.close()
+            CliLlmModuleIO.CURRENT_FILE = None
+            CliLlmModuleIO.CURRENT_FILE_PATH = None
+            return "File closed successfully."
+        except Exception as e:
+            return f"Error closing file: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Close the currently open file.\n"
+            "USAGE: `/close_file [END]\n"
+            "EXAMPLE: `/close_file [END]\n"
+        )
+
+
+#!Command /cd <DIR> [END]
+class CliLlmCommandCD(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("cd")
+
+    def action(self, args: list[str]) -> str:
+        if not args:
+            return "Error: <PATH> is required."
+        path = args[0]
+        target = CliLlmModuleIO.compute_absolute_path(path)
+        allowed = False
+        for dir in CliLlmKernel.ALLOWED_DIRECTORIES:
+            if target.startswith(dir + os.sep) or target == dir:
+                allowed = True
+                break
+        if not allowed:
+            absolute_paths = [
+                os.path.abspath(d) for d in CliLlmKernel.ALLOWED_DIRECTORIES
+            ]
+            return f"Error: Path '{path}' is not allowed. Allowed paths base are: {absolute_paths}"
+
+        try:
+            os.chdir(target)
+            CliLlmKernel.CURRENT_WD = target
+            return f"Changed directory to: {target}"
+        except Exception as e:
+            return f"Error changing directory: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Change the current working directory.\n"
+            "USAGE: `/cd <PATH> [END]\n"
+            "EXAMPLE: `/cd project/ [END]\n"
+        )
+
+
+#!Command /move <SOURCE> <DESTINATION> [END]
+class CliLlmCommandMove(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("move")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) < 2:
+            return "Error: Need <SOURCE> and <DESTINATION>."
+        src = args[0]
+        dst = args[1]
+        src_abs = CliLlmModuleIO.compute_absolute_path(src)
+        dst_abs = CliLlmModuleIO.compute_absolute_path(dst)
+        # Validate both paths are allowed
+        allowed_src = any(
+            [
+                CliLlmModuleIO.is_allowed_path(d)
+                for d in CliLlmKernel.ALLOWED_DIRECTORIES
+            ]
+        )
+        allowed_dst = any(
+            [
+                CliLlmModuleIO.is_allowed_path(d)
+                for d in CliLlmKernel.ALLOWED_DIRECTORIES
+            ]
+        )
+        if not allowed_src or not allowed_dst:
+            return "Error: Source or destination is not allowed."
+        try:
+            shutil.move(src_abs, dst_abs)
+            return f"Moved '{src_abs}' to '{dst_abs}'"
+        except Exception as e:
+            return f"Error moving: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Move a file or directory.\n"
+            "USAGE: `/move <SOURCE> <DESTINATION> [END]\n"
+            "EXAMPLE: `/move file.txt backup/ [END]\n"
+        )
+
+
+#!Command /cursor [END]
+class CliLlmCommandCursor(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("cursor")
+
+    def action(self, args: list[str]) -> str:
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is open. Use /open_file first."
+        try:
+            pos = CliLlmModuleIO.CURRENT_FILE.tell()
+            return f"Current cursor position: {pos} bytes"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Get the current file cursor position.\n"
+            "USAGE: `/cursor [END]\n"
+            "EXAMPLE: `/cursor [END]\n"
+        )
+
+
+#!Command /move_cursor <POSITION> [END]
+class CliLlmCommandMoveCursor(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("move_cursor")
+
+    def action(self, args: list[str]) -> str:
+        if not args:
+            return "Error: <POSITION> is required."
+        try:
+            pos = int(args[0])
+        except Exception as _:
+            return "Error: Position must be an integer."
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is open. Use /open_file first."
+        try:
+            CliLlmModuleIO.CURRENT_FILE.seek(pos)
+            return f"Cursor moved to {pos}"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Move the file cursor to a specific position.\n"
+            "USAGE: `/move_cursor <POSITION> [END]\n"
+            "EXAMPLE: `/move_cursor 1024 [END]\n"
+        )
+
+
+#!Command /max_size <SIZE> [END]
+class CliLlmCommandMaxSize(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("max_size")
+
+    def action(self, args: list[str]) -> str:
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is open. Use /open_file first."
+        try:
+            CliLlmModuleIO.CURRENT_FILE.seek(0, os.SEEK_END)
+            size = CliLlmModuleIO.CURRENT_FILE.tell()
+            return f"File size: {size} bytes"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Get the current file's maximum size.\n"
+            "USAGE: `/max_size [END]\n"
+            "EXAMPLE: `/max_size [END]\n"
+        )
+
+
+#!Command /read <SIZE> [END]
+class CliLlmCommandRead(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("read")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) < 2:
+            return "Error: Need <START> and <END> positions."
+        try:
+            start = int(args[0])
+            end = int(args[1])
+        except Exception as _:
+            return "Error: Positions must be integers."
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is open. Use /open_file first."
+        try:
+            CliLlmModuleIO.CURRENT_FILE.seek(start)
+            data = CliLlmModuleIO.CURRENT_FILE.read(end - start)
+            if len(data) > 4096:
+                return "Error: Exceeds 4096 character limit."
+            return f"Read data: {data}"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Read up to 4096 characters from a file.\n"
+            "USAGE: `/read <START> <END> [END]\n"
+            "EXAMPLE: `/read 0 4095 [END]\n"
+        )
+
+
+#!Command /write <DATA> [END]
+class CliLlmCommandWrite(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("write")
+
+    def action(self, args: list[str]) -> str:
+        if not args:
+            return "Error: <CONTENT> is required."
+        content = " ".join(args)
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is open. Use /open_file first."
+        try:
+            current_pos = CliLlmModuleIO.CURRENT_FILE.tell()
+            CliLlmModuleIO.CURRENT_FILE.write(content)
+            return f"Wrote {len(content)} bytes at {current_pos}"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Write content to the current file position.\n"
+            "USAGE: `/write <CONTENT> [END]\n"
+            "EXAMPLE: `/write 'Hello World' [END]\n"
+        )
+
+
+#!Command /grep <REGEX> [END]
+class CliLlmCommandGrep(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("grep")
+
+    def action(self, args: list[str]) -> str:
+        if not args:
+            return "Error: <REGEX> is required."
+        pattern = " ".join(args)
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is open. Use /open_file first."
+        try:
+            CliLlmModuleIO.CURRENT_FILE.seek(0)
+            content = CliLlmModuleIO.CURRENT_FILE.read(4096)
+            matches = re.findall(pattern, content)
+            return f"Matches: {matches}" if matches else "No matches found."
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Search for regex patterns in the current file.\n"
+            "USAGE: `/grep <REGEX_PATTERN> [END]\n"
+            "EXAMPLE: `/grep 'error' [END]\n"
+        )
+
+
+#!Command /replace <OLD> <NEW> [END]
+class CliLlmCommandReplace(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("replace")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) < 3:
+            return "Error: Need <START>, <END>, and <CONTENT>."
+        try:
+            start = int(args[0])
+            end = int(args[1])
+            new_content = " ".join(args[2:])
+        except Exception as _:
+            return "Error: Invalid parameters."
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is open. Use /open_file first."
+        try:
+            CliLlmModuleIO.CURRENT_FILE.seek(0)
+            data = CliLlmModuleIO.CURRENT_FILE.read()
+            new_data = data[:start] + new_content + data[end:]
+            CliLlmModuleIO.CURRENT_FILE.seek(0)
+            CliLlmModuleIO.CURRENT_FILE.write(new_data)
+            CliLlmModuleIO.CURRENT_FILE.truncate()
+            return "Content replaced successfully."
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Replace content between positions.\n"
+            "USAGE: `/replace <START> <END> <NEW_CONTENT> [END]\n"
+            "EXAMPLE: `/replace 10 20 'new text' [END]\n"
+        )
+
+
+#!Command /replace_regex <REGEX> <NEW> [END]
+class CliLlmCommandReplaceRegex(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("replace_regex")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) < 2:
+            return "Error: Need <PATTERN> and <SUBSTITUTION>."
+        pattern = args[0]
+        sub = " ".join(args[1:])
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is open. Use /open_file first."
+        try:
+            CliLlmModuleIO.CURRENT_FILE.seek(0)
+            data = CliLlmModuleIO.CURRENT_FILE.read()
+            new_data = re.sub(pattern, sub, data)
+            CliLlmModuleIO.CURRENT_FILE.seek(0)
+            CliLlmModuleIO.CURRENT_FILE.write(new_data)
+            CliLlmModuleIO.CURRENT_FILE.truncate()
+            return "Regex substitution applied."
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Replace content using regex.\n"
+            "USAGE: `/replace_regex <PATTERN> <SUBSTITUTION> [END]\n"
+            "EXAMPLE: `/replace_regex 'old' 'new' [END]\n"
+        )
+
+
+#!Command /replace_regex_range <START> <END> <NEW> [END]
+class CliLlmCommandReplaceRegexRange(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("replace_regex_range")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) < 4:
+            return "Error: Need <START>, <END>, <PATTERN>, <SUBSTITUTION>."
+        try:
+            start = int(args[0])
+            end = int(args[1])
+            pattern = args[2]
+            sub = args[3]
+        except Exception as _:
+            return "Error: Invalid parameters."
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is open. Use /open_file first."
+        try:
+            CliLlmModuleIO.CURRENT_FILE.seek(0)
+            data = CliLlmModuleIO.CURRENT_FILE.read()
+            target = data[start:end]
+            new_target = re.sub(pattern, sub, target)
+            new_data = data[:start] + new_target + data[end:]
+            CliLlmModuleIO.CURRENT_FILE.seek(0)
+            CliLlmModuleIO.CURRENT_FILE.write(new_data)
+            CliLlmModuleIO.CURRENT_FILE.truncate()
+            return "Regex substitution applied in range."
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Apply regex substitution within a range.\n"
+            "USAGE: `/replace_regex_range <START> <END> <PATTERN> <SUBSTITUTION> [END]\n"
+            "EXAMPLE: `/replace_regex_range 0 100 'old' 'new' [END]\n"
+        )
+
+
+#!Command /erase <START> <END> [END]
+class CliLlmCommandErase(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("erase")
+
+    def action(self, args: list[str]) -> str:
+        if not args or not args[0].isdigit():
+            return "Error: <BYTES> is required (integer)."
+        bytes_to_erase = int(args[0])
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is open. Use /open_file first."
+        try:
+            current_pos = CliLlmModuleIO.CURRENT_FILE.tell()
+            CliLlmModuleIO.CURRENT_FILE.seek(0)
+            data = CliLlmModuleIO.CURRENT_FILE.read()
+            new_data = data[:current_pos] + data[current_pos + bytes_to_erase :]
+            CliLlmModuleIO.CURRENT_FILE.seek(0)
+            CliLlmModuleIO.CURRENT_FILE.write(new_data)
+            CliLlmModuleIO.CURRENT_FILE.truncate()
+            CliLlmModuleIO.CURRENT_FILE.seek(current_pos)  # Reset cursor
+            return f"Erased {bytes_to_erase} bytes at position {current_pos}"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Erase bytes from the current file's cursor position.\n"
+            "USAGE: `/erase <BYTES> [END]\n"
+            "EXAMPLE: `/erase 10 [END]\n"
+        )
+
+
+#!Command /list_dir <DIR> [END]
+class CliLlmCommandListDir(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("list_dir")
+
+    def action(self, args: list[str]) -> str:
+        path = args[0] if args else "."
+        full_path = os.path.abspath(os.path.join(CliLlmKernel.CURRENT_WD, path))
+        if not CliLlmModuleIO.is_allowed_path(full_path):
+            return f"Error: Path '{path}' is not allowed."
+        try:
+            entries = os.listdir(full_path)
+            return f"Contents of '{full_path}':\n- " + "\n- ".join(entries)
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "List directory contents.\n"
+            "USAGE: `/list_dir [PATH] [END]\n"
+            "EXAMPLE: `/list_dir docs/ [END]\n"
+        )
+
+
+#!Command /remove <FILE> [END]
+class CliLlmCommandRemove(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("remove")
+
+    def action(self, args: list[str]) -> str:
+        if not args:
+            return "Error: <PATH> is required."
+        target = args[0]
+        full_path = os.path.abspath(os.path.join(CliLlmKernel.CURRENT_WD, target))
+        if not CliLlmModuleIO.is_allowed_path(full_path):
+            return f"Error: Path '{target}' is not allowed."
+        try:
+            if os.path.isdir(full_path):
+                shutil.rmtree(full_path)
+            else:
+                os.remove(full_path)
+            return f"Removed: {full_path}"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Delete a file or directory.\n"
+            "USAGE: `/remove <PATH> [END]\n"
+            "EXAMPLE: `/remove temp.txt [END]\n"
+        )
+
+
+#!Command /cat <FILE> [END]
+class CliLlmCommandCat(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("cat")
+
+    def action(self, args: list[str]) -> str:
+        if not args:
+            return "Error: <PATH> is required."
+        path = args[0]
+        full_path = os.path.abspath(os.path.join(CliLlmKernel.CURRENT_WD, path))
+        if not CliLlmModuleIO.is_allowed_path(full_path):
+            return f"Error: Path '{path}' is not allowed."
+        try:
+            with open(full_path, "r") as f:
+                content = f.read(4096)  # Limit to 4KB to prevent overflow
+                return f"File contents of '{full_path}':\n{content}"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Display file contents (max 4096 characters).\n"
+            "USAGE: `/cat <PATH> [END]\n"
+            "EXAMPLE: `/cat config.txt [END]\n"
+        )
+
+
+#!Command /file_info <FILE> [END]
+class CliLlmCommandFileInfo(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("file_info")
+
+    def action(self, args: list[str]) -> str:
+        if not CliLlmModuleIO.CURRENT_FILE_PATH:
+            return "No file is open. Use /open_file first."
+        try:
+            stats = os.stat(CliLlmModuleIO.CURRENT_FILE_PATH)
+            return (
+                f"File: {CliLlmModuleIO.CURRENT_FILE_PATH}\n"
+                f"Size: {stats.st_size} bytes\n"
+                f"Created: {datetime.datetime.fromtimestamp(stats.st_birthtime)}\n"
+                f"Modified: {datetime.datetime.fromtimestamp(stats.st_mtime)}"
+            )
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Show metadata for the currently open file.\n"
+            "USAGE: `/file_info [END]\n"
+            "EXAMPLE: `/file_info [END]\n"
+        )
+
+
+#!Command /truncate <SIZE> [END]
+class CliLlmCommandTruncate(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("truncate")
+
+    def action(self, args: list[str]) -> str:
+        if not args or not args[0].isdigit():
+            return "Error: <SIZE> is required (integer)."
+        size = int(args[0])
+        if not CliLlmModuleIO.CURRENT_FILE:
+            return "No file is open. Use /open_file first."
+        try:
+            CliLlmModuleIO.CURRENT_FILE.truncate(size)
+            return f"File truncated to {size} bytes"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Resize the current file to a specific size.\n"
+            "USAGE: `/truncate <SIZE> [END]\n"
+            "EXAMPLE: `/truncate 1024 [END]\n"
+        )
+
+
+#!Command /copy <SOURCE> <DESTINATION> [END]
+class CliLlmCommandCopy(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("copy")
+
+    def action(self, args: list[str]) -> str:
+        if len(args) < 2:
+            return "Error: Need <SOURCE> and <DESTINATION>."
+        src = args[0]
+        dst = args[1]
+        src_abs = CliLlmModuleIO.compute_absolute_path(src)
+        dst_abs = CliLlmModuleIO.compute_absolute_path(dst)
+        if not CliLlmModuleIO.is_allowed_path(
+            src_abs
+        ) or not CliLlmModuleIO.is_allowed_path(dst_abs):
+            return "Error: Path is not allowed."
+        try:
+            if os.path.isdir(src_abs):
+                shutil.copytree(src_abs, dst_abs)
+            else:
+                shutil.copy2(src_abs, dst_abs)
+            return f"Copied '{src_abs}' to '{dst_abs}'"
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def desc(self) -> str:
+        return (
+            "Copy a file or directory.\n"
+            "USAGE: `/copy <SOURCE> <DESTINATION> [END]\n"
+            "EXAMPLE: `/copy config.txt config.bak [END]\n"
+        )
+
+
+#!Module IO
+class CliLlmModuleIO(CliLlmModuleBase):
+    CURRENT_FILE: TextIO | None = None
+    CURRENT_FILE_PATH: str | None = None
+    ALLOWED_DIRECTORIES: list[str] = []
+
+    def __init__(self):
+        super().__init__("io", dependencies=["core"])  # Depends on core module
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        return [
+            CliLlmCommandOpenFile(),
+            CliLlmCommandCloseFile(),
+            CliLlmCommandCD(),
+            CliLlmCommandMove(),
+            CliLlmCommandCursor(),
+            CliLlmCommandMoveCursor(),
+            CliLlmCommandMaxSize(),
+            CliLlmCommandRead(),
+            CliLlmCommandWrite(),
+            CliLlmCommandGrep(),
+            CliLlmCommandReplace(),
+            CliLlmCommandReplaceRegex(),
+            CliLlmCommandReplaceRegexRange(),
+            CliLlmCommandErase(),
+            CliLlmCommandListDir(),
+            CliLlmCommandRemove(),
+            CliLlmCommandCat(),
+            CliLlmCommandFileInfo(),
+            CliLlmCommandTruncate(),
+            CliLlmCommandCopy(),
+        ]
+
+    @staticmethod
+    def compute_absolute_path(path: str):
+        if path.startswith("."):
+            return os.path.abspath(os.path.join(CliLlmKernel.CURRENT_WD, path))
+        else:
+            return os.path.abspath(path)
+
+    @staticmethod
+    def is_allowed_path(path: str) -> bool:
+        abs_path = CliLlmModuleIO.compute_absolute_path(path)
+        for dir in CliLlmKernel.ALLOWED_DIRECTORIES:
+            if abs_path.startswith(dir + os.sep) or abs_path == dir:
+                return True
+        return False
+
 
 # TODO: Module Coding Tools:
 # This module allows the AI to use LSP tools such as treesitter, but also grep
@@ -799,8 +1459,7 @@ class CliLlmModuleCore(CliLlmModuleBase):
 ###! Kernel
 class CliLlmKernel:
     SHOULD_EXIT: bool = False
-    GRAMMAR = None  # LlamaGrammar.from_string('root ::= "/"[a-z].* [END]\n')
-    CONTEXT_HISTORY = None
+    CONTEXT_HISTORY = CliLlmMessageHistory()
     COMMANDS = CliLlmCommandManager()
     MODULES = CliLlmModuleManager()
     MODEL = None
@@ -818,51 +1477,46 @@ class CliLlmKernel:
             help="List of module names to load (e.g., --modules core io)",
         )
         parser.add_argument(
-            "--modules-json",
-            type=str,
-            help="Path to a JSON file containing a list of module names.",
-        )
-        parser.add_argument(
             "--initial-task",
             type=str,
             help="Specify the initial task to execute after kernel initialization.",
             required=True,
         )
+        parser.add_argument(
+            "--allowed-dirs",
+            type=str,
+            help="Comma-separated list of allowed directories for the IO module.",
+            default=".",
+        )
         parsed_args = parser.parse_args(argv)
 
-        # Load modules
-        if parsed_args.modules_json:
-            with open(parsed_args.modules_json, "r") as f:
-                module_names = json.load(
-                    f
-                )  # TODO: Make a JSON file that globalize the parsed args (file config)
-                if not isinstance(module_names, list) or not all(
-                    isinstance(name, str) for name in module_names
-                ):
-                    raise ValueError("JSON file must contain a list of module names.")
-        else:
-            module_names = parsed_args.modules or []
-
         # Register modules
+        module_names = parsed_args.modules or []
         for name in module_names:
             match name:
                 case "core":
                     CliLlmKernel.MODULES.register(CliLlmModuleCore())
 
+                case "io":
+                    CliLlmKernel.MODULES.register(CliLlmModuleIO())
+
                 case _:
                     raise ValueError(f"Module '{name}' is not recognized.")
 
-        # Specify initial task
-        CliLlmKernel.TASK = parsed_args.initial_task
-        # TODO: Create TOT task instance with the initial task
+        # Process allowed directories
+        if parsed_args.allowed_dirs:
+            CliLlmKernel.ALLOWED_DIRECTORIES = [
+                os.path.abspath(d) for d in parsed_args.allowed_dirs.split(",")
+            ]
+        else:
+            CliLlmKernel.ALLOWED_DIRECTORIES = [os.getcwd()]
+
+            # Specify initial task
+            CliLlmKernel.TASK = parsed_args.initial_task
 
     @staticmethod
     def get_wd() -> str:
-        if CliLlmKernel.MODULES.is_registered("io"):
-            return os.getcwd()
-            # TODO: If os module is activated, then we return here the current directory
-        else:
-            return os.getcwd()
+        return CliLlmKernel.CURRENT_WD
 
     @staticmethod
     def init():
@@ -891,39 +1545,80 @@ class CliLlmKernel:
     def compute_sys_prompt():
         return (
             "[INST] <s>\n"
-            "**Structured Reasoning Protocol**\n\n"
-            "Follow this exact sequence for EVERY action:\n"
-            "1. THINK: Analyze the current task and plan what you should do. It is useful to call these commands several times before going to 2. This allows you to test your thoughts, and check that the next action is actually what you want to do. Always check that your thinking is in line with the idea being developed.\n"
-            "2. ACT: Choose ONE command from the available commands section below.\n"
-            "3. REFLECT: Verify action results before continuing.\n"
-            "4. PLAN: Set, plan, test and improve your thoughts. Are you getting the results you want? Is there room for improvement? Have you made mistakes?\n\n"
-            "**Current Task Context**\n"
-            f"Main Objective: {CliLlmKernel.TASK}\n"
-            "**Execution Cycle Template**\n"
-            "EXAMPLE 1 - Math Problem:\n"
-            "/reason Analyzing equation: First I need to isolate x... [END]\n"
-            "/create_task -c 12 -t Verify solution by substitution [END]\n"
-            "/comment 13 Checking if x=5 satisfies original equation [END]\n\n"
-            "EXAMPLE 2 - Programming Task:\n"
-            "/reason The infinite loop likely comes from incorrect termination condition [END]\n"
-            "/create_task -c 8 -t Implement new loop structure [END]\n"
-            "/comment 9 Trying while loop with decrementing counter [END]\n"
-            "/done 9 [END]\n\n"
-            "**Strict Command Rules:**\n"
-            "- ALWAYS use /reason BEFORE creating tasks\n"
-            "- Create MAX 3 subtasks per action\n"
-            "- Always terminate a command call with [END]! EXAMPLE: \\<command> <args or parameters...> [END]. One command call always finish with [END]!\n"
-            "- Verify dependencies with /parents before /done\n"
-            "- Use /comment after EVERY task creation\n\n"
-            "**Available Commands:**\n"
-            f"{CliLlmKernel.get_command_list_str()}\n"
+            "**SYSTEM INSTRUCTIONS**\n\n"
+            "You are a structured reasoning agent. **ALL ACTIONS MUST BE PERFORMED THROUGH THE EXPLICITLY LISTED COMMANDS ONLY.**\n\n"
+            "## PROTOCOL ENFORCEMENT\n"
+            "1. **COMMAND RESTRICTION**: Only use the commands listed under AVAILABLE COMMANDS. Direct task-solving without commands is prohibited.\n"
+            "2. **COMMAND TERMINATION**: Every command must end with `[END]`. Failure to do so will result in rejection.\n"
+            "3. **SEQUENTIAL FLOW**: Follow the protocol steps below *for every action* without skipping steps.\n\n"
+            "## STRUCTURED REASONING PROTOCOL\n"
+            "1. **THINK** (REQUIRED):\n"
+            "   - Use `/say` to document all reasoning, hypotheses, and plans.\n"
+            "   - Analyze dependencies using `/parents` and `/childrens` before finalizing actions.\n"
+            "   - **MUST** call `/say` at least once before any `/create_task` or `/done`.\n\n"
+            "2. **ACT** (REQUIRED):\n"
+            "   - Execute *exactly one* command from **Available Commands**.\n"
+            "   - Example: `/create_task -c 5 -t Verify solution [END]`\n\n"
+            "3. **REFLECT** (REQUIRED):\n"
+            "   - Validate command results using status checks (e.g., `/status 5`, `/history 5`).\n"
+            "   - If unsuccessful, use `/fail` and return to THINK phase.\n\n"
+            "4. **PLAN** (REQUIRED):\n"
+            "   - Adjust strategy using `/comment` to document reflections.\n"
+            "   - Ensure all tasks meet dependency requirements before marking as done.\n\n"
+            "## CURRENT TASK CONTEXT\n"
+            f"**Main Objective**: {CliLlmKernel.TASK}\n\n"
+            "## PROTOCOL EXAMPLES\n"
+            "### Example 1: Mathematical Problem\n"
+            "/say Analyzing equation: Isolate x by dividing both sides. Testing with substitution... [END]\n"
+            "/create_task -c 3 -t Verify solution with x=5 [END]\n"
+            "/comment 4 Substitution shows inconsistency at step 2 [END]\n\n"
+            "### Example 2: Programming Task\n"
+            "/say Infinite loop likely from off-by-one error in loop condition [END]\n"
+            "/create_task -c 7 -t Implement safeguard counter [END]\n"
+            "/done 7 [END]\n\n"
+            "## STRICT RULES\n"
+            "- **NO DIRECT TASK-SOLVING**: All actions must go through commands.\n"
+            "- **MAX 3 SUBTASKS**: Do not create more than 3 subtasks per action.\n"
+            "- **DEPENDENCY CHECK**: Use `/parents` before marking tasks as done.\n"
+            "- **COMMENT REQUIREMENT**: Every `/create_task` must be followed by `/comment`.\n\n"
+            "## AVAILABLE COMMANDS\n"
+            f"{CliLlmKernel.get_command_list_str()}\n\n"
+            "**VIOLATIONS OF THIS PROTOCOL WILL RESULT IN SYSTEM REJECTION.**\n"
             "</s> [/INST]"
         )
 
     @staticmethod
-    def compute_prompt():
+    def compute_continuous_history():
         assert CliLlmKernel.CONTEXT_HISTORY is not None
         return f"{CliLlmKernel.CONTEXT_HISTORY.get()}\n"
+
+    @staticmethod
+    def compute_next_response(prompt: str) -> Tuple[str, str]:
+        # Generate first answer
+        full_response = CliLlmModel.send_prompt(prompt)
+        argv = full_response["choices"][0]["text"]
+        argv = argv.strip()
+        answer = f"\n{CliLlmKernel.get_wd()}$ /{argv} [END]\n"
+        print(answer)
+        print("")
+
+        # Process first command
+        argv_words = argv.split(" ")
+        command = argv_words[0]
+        result = CliLlmKernel.COMMANDS.execute(argv_words[0], argv_words[1:])
+
+        # If command is `ask`, wait for user input
+        if command == "ask":
+            if len(argv_words) < 2 or argv_words[-1] != "[END]":
+                print("Invalid ask command format.")
+            else:
+                question = " ".join(argv_words[1:-1])
+                user_answer: str | None = None
+                while user_answer is None:
+                    user_answer = input(f"\nAI's question: {question}\nYour answer: ")
+                CliLlmKernel.CONTEXT_HISTORY.add(f"User: {user_answer}")
+
+        return result, answer
 
     @staticmethod
     def init_run():
@@ -933,45 +1628,24 @@ class CliLlmKernel:
         print("")
 
         # Generate first answer
-        full_response = CliLlmModel.send_prompt(
-            sys_prompt,
-            CliLlmKernel.GRAMMAR,
-        )
-        argv = full_response["choices"][0]["text"]
-        argv = argv.strip()
-        answer = f"\n{CliLlmKernel.get_wd()}$ /{argv} [END]\n"
-
-        # Process first command
-        argv_words = argv.split(" ")
-        result = CliLlmKernel.COMMANDS.execute(argv_words[0], argv_words[1:])
+        result, answer = CliLlmKernel.compute_next_response(sys_prompt)
 
         # Initialize History
-        CliLlmKernel.CONTEXT_HISTORY = CliLlmMessageHistory(sys_prompt + answer)
-        CliLlmKernel.CONTEXT_HISTORY.add("[INST]" + result + "[/INST]\n")
+        CliLlmKernel.CONTEXT_HISTORY.set_system_prompt(sys_prompt)
+        CliLlmKernel.CONTEXT_HISTORY.add(answer + "[INST]" + result + "[/INST]\n")
 
     @staticmethod
     def run():
         assert CliLlmKernel.CONTEXT_HISTORY is not None
 
         # Continuous Prompt
-        prompt = CliLlmKernel.compute_prompt()
+        prompt = CliLlmKernel.compute_continuous_history()
 
         # Appending working directory to generated prompt
         prompt += f"\n{CliLlmKernel.get_wd()}$ /"
 
         # Generate answer
-        # TODO: Maybe do a while loop until we found the [END] token
-        full_response = CliLlmModel.send_prompt(prompt, CliLlmKernel.GRAMMAR)
-        argv = full_response["choices"][0]["text"]
-        argv = argv.strip()
-        answer = f"\n{CliLlmKernel.get_wd()}$ /{argv} [END]\n"
-        print(answer)
-        print("")
-
-        # Process command
-        argv_words = argv.split(" ")
-        result = CliLlmKernel.COMMANDS.execute(argv_words[0], argv_words[1:])
-        # print(CliLlmKernel.STATES.message_status())
+        result, answer = CliLlmKernel.compute_next_response(prompt)
 
         # Update history
         CliLlmKernel.CONTEXT_HISTORY.add(answer + "[INST]" + result + "[/INST]\n")
