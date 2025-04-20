@@ -1,4 +1,5 @@
 from typing import Tuple, TextIO
+from enum import Enum as Enumerate
 from llama_cpp import Llama
 from groq import Groq
 
@@ -10,12 +11,24 @@ import shutil
 import re
 
 
+###! Provider
+# TODO: We might need to update the provider to use GROQ or LLAMA. Depending on this value, GROQ for Groq Clouds using Groq class, LLAMA for Llama using Llama class.
+class CliLlmProvider(Enumerate):
+    GROQ = 0
+    LLAMA = 1
+
+
+###! Model
+# TODO: Use the below enum to select the model we running. We might update the system prompt format as well, i.e, Mistral, Llama, etc.
+class CliLlmModel(Enumerate):
+    MISTRAL_INSTRUCT_7B = 0
+    QWQ_32B = 1
+
+
 ###! Configuration
-class CliLlmModel:
+class CliLlmPrompter:
     ## Model Source
     MODEL_NAME = "MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF"
-    # TODO: It would be good to either run a model locally, and if '-g' argument is passed
-    # to the script, then we might run the model with groq clouds
 
     ## Model quantization
     MODEL_QUANT = "*q6_K.gguf"
@@ -38,14 +51,14 @@ class CliLlmModel:
 
     @staticmethod
     def init():
-        if not CliLlmModel.MODEL:
+        if not CliLlmPrompter.MODEL:
             try:
-                CliLlmModel.MODEL = Llama.from_pretrained(
-                    repo_id=CliLlmModel.MODEL_NAME,
-                    filename=CliLlmModel.MODEL_QUANT,
-                    n_ctx=CliLlmModel.N_CTX,
-                    n_gpu_layers=CliLlmModel.N_GPU_LAYERS,
-                    n_batch=CliLlmModel.N_BATCH,
+                CliLlmPrompter.MODEL = Llama.from_pretrained(
+                    repo_id=CliLlmPrompter.MODEL_NAME,
+                    filename=CliLlmPrompter.MODEL_QUANT,
+                    n_ctx=CliLlmPrompter.N_CTX,
+                    n_gpu_layers=CliLlmPrompter.N_GPU_LAYERS,
+                    n_batch=CliLlmPrompter.N_BATCH,
                     verbose=False,
                 )
             except Exception as e:
@@ -54,18 +67,18 @@ class CliLlmModel:
 
     @staticmethod
     def send_prompt(prompt: str, max_tokens: int = N_CTX):
-        if not CliLlmModel.MODEL:
+        if not CliLlmPrompter.MODEL:
             raise ValueError("Model not initialized")
 
-        max_tokens = min(max_tokens, CliLlmModel.N_CTX - len(prompt) - 32)
+        max_tokens = min(max_tokens, CliLlmPrompter.N_CTX - len(prompt) - 32)
 
-        return CliLlmModel.MODEL(
+        return CliLlmPrompter.MODEL(
             prompt=prompt,
             max_tokens=max_tokens,
-            temperature=CliLlmModel.N_TEMPERATURE,
-            top_p=CliLlmModel.N_TOP_P,
-            min_p=CliLlmModel.N_MIN_P,
-            top_k=CliLlmModel.N_TOP_K,
+            temperature=CliLlmPrompter.N_TEMPERATURE,
+            top_p=CliLlmPrompter.N_TOP_P,
+            min_p=CliLlmPrompter.N_MIN_P,
+            top_k=CliLlmPrompter.N_TOP_K,
             stop=["[END]"],
         )
         # return CliLlmModel.MODEL.create_completion(
@@ -81,13 +94,13 @@ class CliLlmModel:
 
     @staticmethod
     def finish():
-        CliLlmModel.MODEL = None
+        CliLlmPrompter.MODEL = None
 
     @staticmethod
     def tokenize(prompt: str) -> list[int]:
         return (
-            CliLlmModel.MODEL.tokenize(prompt.encode("utf-8"))
-            if CliLlmModel.MODEL
+            CliLlmPrompter.MODEL.tokenize(prompt.encode("utf-8"))
+            if CliLlmPrompter.MODEL
             else []
         )
 
@@ -199,8 +212,8 @@ class CliLlmMessageHistory:
         self.total_size = 0
 
     def compute_tokens(self, prompt: str) -> int:
-        assert CliLlmModel.MODEL is not None
-        return len(CliLlmModel.MODEL.tokenize(prompt.encode("utf-8")))
+        assert CliLlmPrompter.MODEL is not None
+        return len(CliLlmPrompter.MODEL.tokenize(prompt.encode("utf-8")))
 
     def set_system_prompt(self, system_prompt: str):
         assert self.system_prompt is None
@@ -209,10 +222,10 @@ class CliLlmMessageHistory:
 
     def add(self, content: str):
         assert self.system_prompt is not None
-        assert CliLlmModel.MODEL is not None
+        assert CliLlmPrompter.MODEL is not None
         tokens_count = self.compute_tokens(content)
 
-        while self.total_size > CliLlmModel.N_CTX and len(self.blocks) > 0:
+        while self.total_size > CliLlmPrompter.N_CTX and len(self.blocks) > 0:
             self.blocks.pop(0)
             self.total_size -= self.counts.pop(0)
 
@@ -1424,37 +1437,53 @@ class CliLlmModuleIO(CliLlmModuleBase):
         return False
 
 
-# TODO: Module Coding Tools:
-# This module allows the AI to use LSP tools such as treesitter, but also grep
-
-# TODO: Coding Tools
-# /symbols FILE
-# /workspace_symbols FILE
-# /grep_symbols FILE REGEX
-# /workspace_grep_symbols FILE REGEX
-# /replace_symbols SYMBOL NEW_SYMBOL
+# TODO: Module LSP
+# This module integrates Language Server Protocol (LSP) features alongside Tree‑sitter parsing and traditional grep utilities.
+#  - Use Tree‑sitter to build an AST for precise syntax analysis and highlighting, enabling commands like /ast and /callgraph.
+#  - Leverage an LSP backend for semantic features (go-to-definition, refactoring, diagnostics).
+#  - Retain grep for quick regex searches across files; combine with workspace-aware filtering.
+# /symbols FILE               # List all top-level symbols (functions, classes) in a single file using LSP.
+# /outline FILE               # Generate a hierarchical outline of definitions via Tree‑sitter.
+# /workspace_symbols          # Index and list all symbols across the workspace using LSP.
+# /grep_patterns PATTERN FILE # Run grep with advanced flags for literal vs regex searches.
+# /grep_workspace PATTERN     # Grep across all project files with find+grep combo to ensure consistent filenames.
+# /replace_symbols OLD NEW    # Use LSP rename to refactor symbols safely, updating all references.
+# /goto SYMBOL                # Jump directly to definition of SYMBOL via LSP’s “go to definition."
+# /find_references SYMBOL     # List all references to SYMBOL in the workspace, powered by LSP.
 
 # TODO: Module Execute:
-# This module allows the AI to execute scripts, executable within the allowed folders
+# This module enables safe execution of scripts or binaries in approved directories.
+#  - Implement sandboxing (e.g., Docker, chroot, language-specific sandboxes) to isolate processes.
+#  - Enforce a whitelist of directories and binaries; require user confirmation for unknown executables.
+#  - Impose resource limits (CPU time, memory) to prevent runaway processes.
+# /execute PATH [ARGS...]      # Execute a script or binary; checks whitelist and sandbox before running.
+# /exec_safe PATH [ARGS...]    # Enforced-safe execution: auto‑verifies PATH is in an allowed directory.
+# /exec_status PID             # Query status, exit code, and resource usage of a running process.
 
-# TODO: Execute commands:
-# /execute PATH ARGS
+# TODO: Module Web
+# This module provides simple web search and scraping commands.
+#  - Use a headless browser API (e.g., Puppeteer) or an HTTP client with user‑agent restrictions.
+#  - Rate‑limit requests and sanitize inputs to prevent SSRF or malicious redirects.
+# /web_search QUERY           # Perform a web search via a safe search API; returns top results.
+# /web_fetch URL              # Fetch and sanitize the HTML of a URL for downstream parsing.
+# /web_extract SELECTOR       # Extract text or data from last‑fetched page using CSS/XPath selectors.
 
-# TODO: Module Web:
-# This module allows the AI to use a web browser, search for information on the web, etc...
-# /web_search QUERY
+# TODO: Module Scratchpad
+# This module creates a lightweight scratchpad for reasoning steps and persistent memory for conversation context.
+#  - Scratchpad (short‑term) holds intermediate reasoning steps, cleared after each subtask.
+#  - Memory (long‑term) stores key insights, summaries, or code snippets in a vector store.
+# /memorize MESSAGE           # Append MESSAGE to the short‑term scratchpad for current reasoning.
+# /flush_scratchpad           # Clear the current session’s scratchpad.
+# /task_memorize ID MESSAGE   # Link a memory entry to a specific task ID in the long‑term store.
+# /remember ID                # Retrieve all memories linked to task ID.
+# /memory_list                # List all long‑term memory keys and summaries.
+# /memory_clear [ID]          # Delete a specific memory entry or clear all.
 
-# TODO: Module Scratchpad:
-# This module allows the AI to use a scratchpad, a temporary space where it can write code, notes, etc...
-# /memorize MESSAGE
-# /task_memorize TASK_ID MESSAGE
-# /remember TASK_ID
-# /memory_list
-# /memory_clear
-
-# TODO: Module Debug:
-# This module allows the AI to use a debugger on the currently opened file, set breakpoints, etc... It uses the IO module to get the current file.
-# /debug PATH DARGS ARGS (automatically choose gdb, pydbg etc...)
+# TODO: Module Debug
+# This module integrates DAP for multi‑language debugging plus language-specific adapters.
+#  - Use DAP so the same /debug command works for Python, C++, Rust, etc.
+#  - Auto-detect language by file extension and select appropriate adapter (pdb, gdb, lldb).
+#  - Support setting breakpoints, inspecting variables, and stepping.  )
 
 
 ###! Kernel
@@ -1518,13 +1547,16 @@ class CliLlmKernel:
         else:
             CliLlmKernel.TASK = parsed_args.initial_task
 
+        # TODO: Handle allowed dirs for IO
+        # TODO: Handle allowed bash commands for execute. For exemple --allowed-cmds gdb allow the bash command to use the gdb commands
+
     @staticmethod
     def get_wd() -> str:
         return CliLlmKernel.CURRENT_WD
 
     @staticmethod
     def init():
-        CliLlmModel.init()
+        CliLlmPrompter.init()
         print("\nPulsar Project - CLI LLM\n")
 
         # Initialize core module by default
@@ -1536,7 +1568,7 @@ class CliLlmKernel:
         CliLlmKernel.SHOULD_EXIT = True
         CliLlmKernel.CONTEXT_HISTORY = None
         CliLlmKernel.COMMANDS.clear()
-        CliLlmModel.finish()
+        CliLlmPrompter.finish()
 
     @staticmethod
     def get_command_list_str():
@@ -1598,7 +1630,7 @@ class CliLlmKernel:
     @staticmethod
     def compute_next_response(prompt: str) -> Tuple[str, str]:
         # Generate first answer
-        full_response = CliLlmModel.send_prompt(prompt)
+        full_response = CliLlmPrompter.send_prompt(prompt)
         argv = full_response["choices"][0]["text"]
         argv = argv.strip()
         answer = f"\n{CliLlmKernel.get_wd()}$ /{argv} [END]\n"
@@ -1666,7 +1698,7 @@ if __name__ == "__main__":
     # - Change the task
     # - Finish the execution
     # - Pause the execution
-    # - Answer AI question of the TOT commands module ($ cmd.ask command for TOT
+    # - Answer AI question of the TOT commands module (/ask command for TOT)
 
     CliLlmKernel.parse_args(sys.argv[1:])
     CliLlmKernel.init()
