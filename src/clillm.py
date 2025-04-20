@@ -1,5 +1,6 @@
 from typing import Tuple, TextIO
 from llama_cpp import Llama
+from groq import Groq
 
 import datetime
 import os
@@ -1511,7 +1512,10 @@ class CliLlmKernel:
         else:
             CliLlmKernel.ALLOWED_DIRECTORIES = [os.getcwd()]
 
-            # Specify initial task
+        # Specify initial task
+        if not parsed_args.initial_task or parsed_args.initial_task == "":
+            raise ValueError("Initial task is required.")
+        else:
             CliLlmKernel.TASK = parsed_args.initial_task
 
     @staticmethod
@@ -1547,13 +1551,11 @@ class CliLlmKernel:
             "[INST] <s>\n"
             "**SYSTEM INSTRUCTIONS**\n\n"
             "You are a structured reasoning agent. **ALL ACTIONS MUST BE PERFORMED THROUGH THE EXPLICITLY LISTED COMMANDS ONLY.**\n\n"
-            "## PROTOCOL ENFORCEMENT\n"
-            "1. **COMMAND RESTRICTION**: Only use the commands listed under AVAILABLE COMMANDS. Direct task-solving without commands is prohibited.\n"
-            "2. **COMMAND TERMINATION**: Every command must end with `[END]`. Failure to do so will result in rejection.\n"
-            "3. **SEQUENTIAL FLOW**: Follow the protocol steps below *for every action* without skipping steps.\n\n"
+            "## AVAILABLE COMMANDS\n"
+            f"{CliLlmKernel.get_command_list_str()}\n\n"
             "## STRUCTURED REASONING PROTOCOL\n"
             "1. **THINK** (REQUIRED):\n"
-            "   - Use `/say` to document all reasoning, hypotheses, and plans.\n"
+            "   - Use `/say` to document all reasoning, hypotheses, and plans for the current task / problem.\n"
             "   - Analyze dependencies using `/parents` and `/childrens` before finalizing actions.\n"
             "   - **MUST** call `/say` at least once before any `/create_task` or `/done`.\n\n"
             "2. **ACT** (REQUIRED):\n"
@@ -1565,8 +1567,8 @@ class CliLlmKernel:
             "4. **PLAN** (REQUIRED):\n"
             "   - Adjust strategy using `/comment` to document reflections.\n"
             "   - Ensure all tasks meet dependency requirements before marking as done.\n\n"
-            "## CURRENT TASK CONTEXT\n"
-            f"**Main Objective**: {CliLlmKernel.TASK}\n\n"
+            "## TASK\n"
+            f"{CliLlmKernel.TASK}\n\n"
             "## PROTOCOL EXAMPLES\n"
             "### Example 1: Mathematical Problem\n"
             "/say Analyzing equation: Isolate x by dividing both sides. Testing with substitution... [END]\n"
@@ -1581,9 +1583,10 @@ class CliLlmKernel:
             "- **MAX 3 SUBTASKS**: Do not create more than 3 subtasks per action.\n"
             "- **DEPENDENCY CHECK**: Use `/parents` before marking tasks as done.\n"
             "- **COMMENT REQUIREMENT**: Every `/create_task` must be followed by `/comment`.\n\n"
-            "## AVAILABLE COMMANDS\n"
-            f"{CliLlmKernel.get_command_list_str()}\n\n"
-            "**VIOLATIONS OF THIS PROTOCOL WILL RESULT IN SYSTEM REJECTION.**\n"
+            "## PROTOCOL ENFORCEMENT\n"
+            "1. **COMMAND RESTRICTION**: Only use the commands listed under AVAILABLE COMMANDS. Direct task-solving without commands is prohibited.\n"
+            "2. **COMMAND TERMINATION**: Every command must end with `[END]`. Failure to do so will result in rejection.\n"
+            "3. **SEQUENTIAL FLOW**: Follow the protocol steps under `## STRUCTURED REASONING PROTOCOL` without skipping steps.\n\n"
             "</s> [/INST]"
         )
 
