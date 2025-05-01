@@ -1395,7 +1395,7 @@ class CliLlmModuleIO(CliLlmModuleBase):
     ALLOWED_DIRECTORIES: list[str] = []
 
     def __init__(self):
-        super().__init__("io", dependencies=["core"])  # Depends on core module
+        super().__init__("io", dependencies=["core", "docker"])
 
     def retrieve_commands(self) -> list[CliLlmCommandBase]:
         return [
@@ -1451,39 +1451,172 @@ class CliLlmModuleIO(CliLlmModuleBase):
 # /goto SYMBOL                # Jump directly to definition of SYMBOL via LSP’s “go to definition."
 # /find_references SYMBOL     # List all references to SYMBOL in the workspace, powered by LSP.
 
-# TODO: Module Execute:
+
+#! Command /symbols <FILE> [END]
+class CliLlmCommandSymbols(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("symbols")
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        # TODO: symbols symbols
+        return []
+
+    def desc(self) -> str:
+        return (
+            "List all top-level symbols (functions, classes) in a single file using LSP.\n"
+            "USAGE: `/symbols <FILE> [END]\n"
+            "EXAMPLE: `/symbols main.py [END]\n"
+        )
+
+
+#! Command /outline <FILE> [END]
+class CliLlmCommandOutline(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("outline")
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        # TODO: outline
+        return []
+
+    def desc(self) -> str:
+        # TODO: outline desc
+        return ""
+
+
+#! Command /workspace_symbols [END]
+class CliLlmCommandWorkspaceSymbols(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("workspace_symbols")
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        # TODO: workspace_symbols
+        return []
+
+    def desc(self) -> str:
+        # TODO: workspace_symbols desc
+        return ""
+
+
+#! Command /grep_patterns <PATTERN> <FILE> [END]
+class CliLlmCommandGrepPatterns(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("grep_patterns")
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        # TODO: grep_patterns
+        return []
+
+    def desc(self) -> str:
+        # TODO: grep_patterns desc
+        return ""
+
+
+#! Command /grep_workspace <PATTERN> [END]
+class CliLlmCommandGrepWorkspace(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("grep_workspace")
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        # TODO: grep_workspace
+        return []
+
+    def desc(self) -> str:
+        # TODO: grep_workspace desc
+        return ""
+
+
+#! Command /replace_symbols <OLD> <NEW> [END]
+class CliLlmCommandReplaceSymbols(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("replace_symbols")
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        # TODO: replace_symbols
+        return []
+
+    def desc(self) -> str:
+        # TODO: replace_symbols desc
+        return ""
+
+
+#! Command /goto <SYMBOL> [END]
+class CliLlmCommandGoto(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("goto")
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        # TODO: goto
+        return []
+
+    def desc(self) -> str:
+        # TODO: goto desc
+        return ""
+
+
+#! Command /find_references <SYMBOL> [END]
+class CliLlmCommandFindReferences(CliLlmCommandBase):
+    def __init__(self):
+        super().__init__("find_references")
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        # TODO: find_references
+        return []
+
+    def desc(self) -> str:
+        # TODO: find_references desc
+        return ""
+
+
+#! Module LSP
+class CliLlmModuleLSP(CliLlmModuleBase):
+    def __init__(self):
+        super().__init__("lsp", dependencies=["core", "io"])
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        return [
+            CliLlmCommandSymbols(),
+            CliLlmCommandOutline(),
+            CliLlmCommandWorkspaceSymbols(),
+            CliLlmCommandGrepPatterns(),
+            CliLlmCommandGrepWorkspace(),
+            CliLlmCommandReplaceSymbols(),
+            CliLlmCommandGoto(),
+            CliLlmCommandFindReferences(),
+        ]
+
+
+# TODO: Module Docker:
 # This module enables safe execution of scripts or binaries in approved directories.
 #  - Implement sandboxing (e.g., Docker, chroot, language-specific sandboxes) to isolate processes.
 #  - Enforce a whitelist of directories and binaries; require user confirmation for unknown executables.
 #  - Impose resource limits (CPU time, memory) to prevent runaway processes.
-# /execute PATH [ARGS...]      # Execute a script or binary; checks whitelist and sandbox before running.
-# /exec_safe PATH [ARGS...]    # Enforced-safe execution: auto‑verifies PATH is in an allowed directory.
-# /exec_status PID             # Query status, exit code, and resource usage of a running process.
+# /execute PATH [ARGS...]     # Execute a script or binary; checks whitelist and sandbox before running.
+# /exec_safe PATH [ARGS...]   # Enforced-safe execution: auto‑verifies PATH is in an allowed directory.
+# /exec_status PID            # Query status, exit code, and resource usage of a running process.
+
+
+#! Module Docker
+class CliLlmModuleDocker(CliLlmModuleBase):
+    def __init__(self):
+        super().__init__("docker", dependencies=["core"])
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        return []
+
 
 # TODO: Module Web
 # This module provides simple web search and scraping commands.
 #  - Use a headless browser API (e.g., Puppeteer) or an HTTP client with user‑agent restrictions.
 #  - Rate‑limit requests and sanitize inputs to prevent SSRF or malicious redirects.
-# /web_search QUERY           # Perform a web search via a safe search API; returns top results.
-# /web_fetch URL              # Fetch and sanitize the HTML of a URL for downstream parsing.
-# /web_extract SELECTOR       # Extract text or data from last‑fetched page using CSS/XPath selectors.
 
-# TODO: Module Scratchpad
-# This module creates a lightweight scratchpad for reasoning steps and persistent memory for conversation context.
-#  - Scratchpad (short‑term) holds intermediate reasoning steps, cleared after each subtask.
-#  - Memory (long‑term) stores key insights, summaries, or code snippets in a vector store.
-# /memorize MESSAGE           # Append MESSAGE to the short‑term scratchpad for current reasoning.
-# /flush_scratchpad           # Clear the current session’s scratchpad.
-# /task_memorize ID MESSAGE   # Link a memory entry to a specific task ID in the long‑term store.
-# /remember ID                # Retrieve all memories linked to task ID.
-# /memory_list                # List all long‑term memory keys and summaries.
-# /memory_clear [ID]          # Delete a specific memory entry or clear all.
 
-# TODO: Module Debug
-# This module integrates DAP for multi‑language debugging plus language-specific adapters.
-#  - Use DAP so the same /debug command works for Python, C++, Rust, etc.
-#  - Auto-detect language by file extension and select appropriate adapter (pdb, gdb, lldb).
-#  - Support setting breakpoints, inspecting variables, and stepping.  )
+#! Module Web
+class CliLlmModuleWeb(CliLlmModuleBase):
+    def __init__(self):
+        super().__init__("web", dependencies=["core"])
+
+    def retrieve_commands(self) -> list[CliLlmCommandBase]:
+        return []
 
 
 ###! Kernel
@@ -1529,6 +1662,15 @@ class CliLlmKernel:
 
                 case "io":
                     CliLlmKernel.MODULES.register(CliLlmModuleIO())
+
+                case "lsp":
+                    CliLlmKernel.MODULES.register(CliLlmModuleLSP())
+
+                case "docker":
+                    CliLlmKernel.MODULES.register(CliLlmModuleDocker())
+
+                case "web":
+                    CliLlmKernel.MODULES.register(CliLlmModuleWeb())
 
                 case _:
                     raise ValueError(f"Module '{name}' is not recognized.")
