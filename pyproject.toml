@@ -1,18 +1,29 @@
 [build-system]
-requires = ["setuptools", "wheel"] #TODO: Add huggingface-hub, llama-cpp
+requires = ["setuptools", "wheel"]      #TODO: Add huggingface-hub, llama-cpp
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pp_auto_llm"
-version = "1.0.0"
-description = "Pulsar Project - Auto LLM."
+name = "lazyagent"
+version = "0.1.0"
+description = "TODO: Description of the lazyAgent package"
 authors = [
-    { name = "Louis-Quentin Noé", email = "louis-quentin.pa.noe@gmail.com" }
+  { name = "Louis-Quentin Noé", email = "louis-quentin.pa.noe@gmail.com" },
 ]
 readme = "README.md"
 license = { text = "MIT" }
-dependencies = []
+
+[project.scripts]
+lazyllm = "lazyagent.__main__:main"
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "black", "ruff"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=lazyagent --cov-report=lcov"
+testpaths = ["tests"]
 
 [tool.setuptools]
-packages = ["src"]
-include_package_data = true
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

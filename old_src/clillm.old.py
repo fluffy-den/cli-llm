@@ -28,10 +28,11 @@ class CliLlmModel(Enumerate):
 ###! Configuration
 class CliLlmPrompter:
     ## Model Source
-    MODEL_NAME = "MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF"
+    MODEL_NAME = "unsloth/Qwen3-8B-GGUF"
 
     ## Model quantization
-    MODEL_QUANT = "*q6_K.gguf"
+    MODEL_QUANT = "Qwen3-8B-UD-Q5_K_XL.gguf"
+
     ## Context size
     N_CTX = 16384
     ## Offload layers
@@ -39,7 +40,7 @@ class CliLlmPrompter:
     ## Batch size
     N_BATCH = 512
     ## Temperature
-    N_TEMPERATURE = 0.5
+    N_TEMPERATURE = 0.0
     ## Top K
     N_TOP_K = 30
     ## Top P
@@ -1583,25 +1584,6 @@ class CliLlmModuleLSP(CliLlmModuleBase):
             CliLlmCommandGoto(),
             CliLlmCommandFindReferences(),
         ]
-
-
-# TODO: Module Docker:
-# This module enables safe execution of scripts or binaries in approved directories.
-#  - Implement sandboxing (e.g., Docker, chroot, language-specific sandboxes) to isolate processes.
-#  - Enforce a whitelist of directories and binaries; require user confirmation for unknown executables.
-#  - Impose resource limits (CPU time, memory) to prevent runaway processes.
-# /execute PATH [ARGS...]     # Execute a script or binary; checks whitelist and sandbox before running.
-# /exec_safe PATH [ARGS...]   # Enforced-safe execution: auto‑verifies PATH is in an allowed directory.
-# /exec_status PID            # Query status, exit code, and resource usage of a running process.
-
-
-#! Module Docker
-class CliLlmModuleDocker(CliLlmModuleBase):
-    def __init__(self):
-        super().__init__("docker", dependencies=["core"])
-
-    def retrieve_commands(self) -> list[CliLlmCommandBase]:
-        return []
 
 
 # TODO: Module Web

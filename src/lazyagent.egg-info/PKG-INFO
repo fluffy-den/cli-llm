@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: lazyagent
+Version: 0.1.0
+Summary: TODO: Description of the lazyAgent package
+Author-email: Louis-Quentin Noé <louis-quentin.pa.noe@gmail.com>
+License: MIT
+Description-Content-Type: text/markdown
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: black; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+
+

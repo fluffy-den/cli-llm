@@ -1,0 +1,2 @@
+[console_scripts]
+lazyllm = lazyagent.__main__:main

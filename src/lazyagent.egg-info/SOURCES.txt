@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+src/lazyagent/__init__.py
+src/lazyagent/__main__.py
+src/lazyagent.egg-info/PKG-INFO
+src/lazyagent.egg-info/SOURCES.txt
+src/lazyagent.egg-info/dependency_links.txt
+src/lazyagent.egg-info/entry_points.txt
+src/lazyagent.egg-info/requires.txt
+src/lazyagent.egg-info/top_level.txt
+tests/test_module_core.py
